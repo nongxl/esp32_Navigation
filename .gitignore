@@ -56,3 +56,6 @@ release/
 
 *.ino.cpp
 
+
+firmware/releases/
+
