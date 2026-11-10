@@ -1,4 +1,4 @@
-param([string]$JavaPath='', [string]$SdkPath='', [string]$GradlePath='', [string]$Language='', [switch]$Offline)
+﻿param([string]$JavaPath='', [string]$SdkPath='', [string]$GradlePath='', [string]$Language='', [switch]$Offline)
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $root = $PSScriptRoot

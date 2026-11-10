@@ -1,4 +1,4 @@
-param([string]$ProviderPath='',[string]$ApktoolPath='',[string]$JavaPath=$env:JAVA_HOME,
+﻿param([string]$ProviderPath='',[string]$ApktoolPath='',[string]$JavaPath=$env:JAVA_HOME,
       [string]$SdkPath=$env:ANDROID_SDK_ROOT,[string]$GradlePath='',
       [string]$ZigPath='',[string]$PythonPath='python',[switch]$Offline)
 $ErrorActionPreference='Stop'
