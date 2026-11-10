@@ -1,11 +1,7 @@
 @echo off
 setlocal
+title esp32_Navigation Export QuickPack
 cd /d "%~dp0"
-chcp 65001 >nul 2>&1
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "tools\package_release_easypack.ps1"
-
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\package_release_easypack.ps1"
 echo.
-echo ======================================================================
-echo Press any key to exit / 请按任意键退出 . . .
-pause >nul
+pause

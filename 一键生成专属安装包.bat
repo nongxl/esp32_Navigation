@@ -1,11 +1,7 @@
 @echo off
 setlocal
+title esp32_Navigation Quick Signer
 cd /d "%~dp0"
-chcp 65001 >nul 2>&1
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "tools\Quick-Sign.ps1" -Language zh
-
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Quick-Sign.ps1" -Language zh
 echo.
-echo ======================================================================
-echo Press any key to exit / 请按任意键退出 . . .
-pause >nul
+pause
