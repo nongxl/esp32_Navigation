@@ -66,17 +66,22 @@ Moving away from the legacy single-purpose motorcycle narrative and outdated 8-b
 
 The round screen connects to your smartphone over Bluetooth Low Energy (BLE). The phone computes routing and pushes compressed map tiles, turn-by-turn guidance, and media metadata.
 
-#### Android (Recommended — Fully Automated One-Click Build)
-You don't need to install the heavy Android Studio. Windows users can simply run the automated script to build a personalized APK:
+#### Android Companion App
 
-1. **One-Click Build**: Run `一键打包-普通版.bat` or execute in PowerShell:
+##### 🌟 Method 1: Instant Zero-Build Signing (Recommended for Beginners — 2 Seconds, No SDK)
+No need to download hundreds of megabytes of Android SDK or compiler tools:
+1. **Download QuickPack**: Go to [Releases](../../releases) and download `esp32_Navigation-QuickPack-Windows.zip`;
+2. **Instant Packaging**: Extract the archive and double-click `一键生成专属安装包.bat`;
+3. **Instant Output**: In less than **2 seconds**, your personal `esp32_Navigation-personal.apk` and `高德Key申请信息.txt` are ready;
+4. **Free Key Setup**: Register your free key on AutoNavi (AMap) console following the generated SHA-1, install the APK, and paste your key in App settings!
+5. **Seamless Updates**: When updating in the future, simply extract the new base template and run; your signature is preserved without re-registering.
+
+##### 🛠️ Method 2: Full Source Code Local Build (For Developers)
+1. **One-Click Local Build**: Run `一键打包-普通版.bat` or execute in PowerShell:
    ```powershell
-   .\Build-Personal.ps1
-   # Or explicitly in English:
    .\Build-Personal.ps1 -Language en
    ```
-2. **Personalized Signature**: The script automatically fetches dependencies, configures your private keystore, generates a unique package name, and outputs the APK to `output/esp32_Navigation-personal.apk`;
-3. **Map Configuration**: Follow the credentials in `output/Application-info.txt` to register a free key on AutoNavi (for China) or select OpenStreetMap/Mapbox directly in settings (for global use).
+2. **Automatic Build**: The script automatically fetches dependencies, configures your private keystore, and compiles with Gradle. Output is in `output/`.
 
 #### iOS (SwiftUI)
 - Built with modern SwiftUI, featuring multi-modal routing, glassmorphism card UI, and BLE communication;

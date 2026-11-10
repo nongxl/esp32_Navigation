@@ -66,13 +66,21 @@
 
 圆屏设备通过 BLE 低功耗蓝牙与手机 App 互联，由手机完成高德导航算路、媒体信息抓取并低延迟推流至圆屏。
 
-#### 安卓端（Android）—— 推荐使用，全自动开箱即用
-仓库内建完整全自动构建流水线，无需配置复杂的 Android Studio，Windows 用户仅需双击批处理脚本即可全自动打包个人专属 APK：
+#### 安卓端（Android）全场景 App
 
-1. **一键专属打包**：双击根目录的 `一键打包-普通版.bat`（或在 PowerShell 中运行 `.\Build-Personal.ps1`）；
-2. **自动化生成**：脚本自动检测/拉取环境，并为您生成随机专属包名与签名证书，产物位于 `output/` 目录；
-3. **高德 Key 配置**：根据 `output/Application-info.txt` 中生成的专属包名与 SHA1 安全码，前往[高德开放平台](https://console.amap.com/)免费创建 Android Key，在 App 的“地图 Key”设置页填入即可；
-4. **升级保障**：后续版本更新时，请备份 `android/standard/personal.properties` 与 `android/standard/keystore/`，以便覆盖安装时包名签名完全一致。
+##### 🌟 方式一：极速免编译打包（小白用户强烈推荐，零环境、2秒出包）
+无需下载几百兆编译环境，无需安装 Android Studio 或配置 SDK：
+1. **下载小白发布包**：前往 [Releases 页面](../../releases) 下载 `esp32_Navigation-QuickPack-Windows.zip` 并解压；
+2. **一键生成专属包**：双击运行解压目录下的 `一键生成专属安装包.bat`；
+3. **极速完成**：工具将在 **2 秒钟** 内自动生成当前电脑专属的 `esp32_Navigation-personal.apk` 及 `高德Key申请信息.txt`；
+4. **获取免费 Key**：按照文本指引前往[高德开放平台](https://console.amap.com/)粘贴包名与 SHA1 获取 Android Key，安装 App 后填入即可开箱使用！
+5. **升级平滑**：后续升级新版本底包覆盖运行即可，签名自动复用，**无需重新申请高德 Key**。
+
+##### 🛠️ 方式二：全源码本地打包（面向开发者）
+仓库内建完整全自动构建流水线，Windows 用户仅需双击批处理脚本即可本地编译源码：
+1. **一键本地打包**：双击根目录的 `一键打包-普通版.bat`（或在 PowerShell 中运行 `.\Build-Personal.ps1`）；
+2. **自动化生成**：脚本自动检测/拉取环境并完成 Gradle 编译，产物位于 `output/` 目录；
+3. **高德 Key 配置**：根据 `output/Application-info.txt` 申请 Key 并填入 App。
 
 #### 苹果端（iOS）—— 开源共建中
 - **现状说明**：iOS 端已完成现代深色卡片 UI、SwiftUI 全场景路线规划及多出行模式支持；
