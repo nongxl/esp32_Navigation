@@ -77,10 +77,12 @@
 5. **升级平滑**：后续升级新版本底包覆盖运行即可，签名自动复用，**无需重新申请高德 Key**。
 
 ##### 🛠️ 方式二：全源码本地打包（面向开发者）
-仓库内建完整全自动构建流水线，Windows 用户仅需双击批处理脚本即可本地编译源码：
-1. **一键本地打包**：双击根目录的 `一键打包-普通版.bat`（或在 PowerShell 中运行 `.\Build-Personal.ps1`）；
-2. **自动化生成**：脚本自动检测/拉取环境并完成 Gradle 编译，产物位于 `output/` 目录；
-3. **高德 Key 配置**：根据 `output/Application-info.txt` 申请 Key 并填入 App。
+#### 安卓端（Android）
+- **小白用户极速安装 (推荐)**：前往本仓库 [Releases 页面](https://github.com/nongxl/esp32_Navigation/releases) 下载 `esp32_Navigation-QuickPack-Windows.zip`，解压后双击运行 **`一键生成专属安装包.bat`**，2秒即可生成专属安装包 `esp32_Navigation-personal.apk` 及独立包名与 SHA1，完全无需配置 Java、Android Studio 或编译环境！
+- **开发者本地源码打包**：
+  1. 双击根目录的 `一键打包-普通版.bat`（或在 PowerShell 中运行 `.\Build-Personal.ps1`）；
+  2. 脚本自动检测环境并完成 Gradle 编译，产物位于 `output/` 目录；
+  3. 开发者可运行 `导出小白极速发布包.bat` 一键生成供发布给小白用户的免编译分发包。
 
 #### 苹果端（iOS）—— 开源共建中
 - **现状说明**：iOS 端已完成现代深色卡片 UI、SwiftUI 全场景路线规划及多出行模式支持；

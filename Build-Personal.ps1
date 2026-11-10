@@ -179,11 +179,11 @@ New-Item -ItemType Directory -Force (Split-Path -Parent $keyfile) | Out-Null
 
 if (-not (Test-Path $identity)) {
     if (Test-Path $keyfile) { throw 'personal.properties 缺失！若曾生成过证书，请从备份中恢复，防止覆盖导致高德 Key 无法识别。' }
-    $appId = 'com.motonav.u' + [Guid]::NewGuid().ToString('N')
+    $appId = 'org.esp32nav.u' + [Guid]::NewGuid().ToString('N')
     [IO.File]::WriteAllText($identity, "personalApplicationId=$appId`n")
 }
 $appId = (([IO.File]::ReadAllText($identity)).Trim() -split '=', 2)[1].Trim()
-if ($appId -notmatch '^com\.motonav\.u[a-f0-9]{32}$') { throw 'personal.properties 中的包名格式不正确。' }
+if ($appId -notmatch '^org\.esp32nav\.u[a-f0-9]{32}$') { throw 'personal.properties 中的包名格式不正确。' }
 
 if (-not (Test-Path $signing)) {
     if (Test-Path $keyfile) { throw 'keystore.properties 缺失，请从备份中恢复。' }

@@ -35,7 +35,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = providers.gradleProperty("personalApplicationId").getOrElse("com.example.motonav")
+        applicationId = providers.gradleProperty("personalApplicationId").getOrElse("org.esp32nav.companion")
         minSdk = 26
         targetSdk = 35
         versionCode = 131

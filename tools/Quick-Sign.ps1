@@ -1,5 +1,5 @@
 ﻿# ====================================================================
-# esp32_Navigation - 极速专属安装包生成器 (免编译、秒级签名)
+# esp32_Navigation - 极速专属安装包生成器 (免编译、秒级签名、专属包名)
 # Quick Personal Signer for esp32_Navigation (No build tools required)
 # ====================================================================
 
@@ -132,9 +132,31 @@ if (-not $javaExe -or -not $keytoolExe) {
 
 Write-Host "-> Java: $javaExe" -ForegroundColor DarkGray
 
-# 3. 管理用户个人专属数字证书 (Keystore)
+# 3. 管理用户个人专属独立包名 (Package Name)
 $keystoreDir = Join-Path $workDir "keystore"
 New-Item -ItemType Directory -Force $keystoreDir | Out-Null
+$identityFile = Join-Path $keystoreDir "personal.properties"
+
+$appId = $null
+if (Test-Path $identityFile) {
+    Get-Content $identityFile | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -match '^personalApplicationId=(.+)$') { $appId = $matches[1] }
+    }
+}
+
+if (-not $appId -or $appId -notmatch '^org\.esp32nav\.u[a-f0-9]{32}$') {
+    # 全新专属包名：完全脱离 motonav 品牌叙事，生成唯一 32 位 GUID
+    $appId = "org.esp32nav.u" + [Guid]::NewGuid().ToString('N')
+    [System.IO.File]::WriteAllText($identityFile, "personalApplicationId=$appId`n", [System.Text.Encoding]::UTF8)
+    Write-Host (T "-> 正在为你生成专属独立包名: " "-> Generated personal unique package name: ") -NoNewline
+    Write-Host $appId -ForegroundColor Yellow
+} else {
+    Write-Host (T "-> 复用已有专属包名: " "-> Reusing personal package name: ") -NoNewline
+    Write-Host $appId -ForegroundColor Green
+}
+
+# 4. 管理用户个人专属数字证书 (Keystore)
 $keyfile = Join-Path $keystoreDir "personal.jks"
 $keyProps = Join-Path $keystoreDir "keystore.properties"
 
@@ -142,7 +164,6 @@ $alias = "esp32nav"
 $password = $null
 
 if (Test-Path $keyProps) {
-    # 优先复用已有签名配置，确保老用户升级 APK 时 SHA1 不变，无需重新申请高德 Key
     Get-Content $keyProps | ForEach-Object {
         $line = $_.Trim()
         if ($line -match '^storePassword=(.+)$') { $password = $matches[1] }
@@ -155,7 +176,6 @@ if (-not $password -or -not (Test-Path $keyfile)) {
     $password = [Guid]::NewGuid().ToString('N')
     if (Test-Path $keyfile) { Remove-Item -LiteralPath $keyfile -Force -ErrorAction SilentlyContinue }
     
-    # 调用 keytool 生成专属证书 (忽略警告日志)
     & $keytoolExe -genkeypair -storetype JKS -keystore $keyfile `
         -storepass $password -keypass $password -alias $alias `
         -keyalg RSA -keysize 2048 -validity 10000 `
@@ -166,13 +186,12 @@ if (-not $password -or -not (Test-Path $keyfile)) {
         exit 1
     }
     
-    # 持久化密码，后续升级自动复用
-    [System.IO.File]::WriteAllText($keyProps, "storeFile=personal.jks`nstorePassword=$password`nkeyAlias=$alias`nkeyPassword=$password`n")
+    [System.IO.File]::WriteAllText($keyProps, "storeFile=personal.jks`nstorePassword=$password`nkeyAlias=$alias`nkeyPassword=$password`n", [System.Text.Encoding]::UTF8)
 } else {
     Write-Host (T "-> 复用已有个人专属证书 (升级版本无需重新申请高德Key)" "-> Reusing existing personal certificate (no need to re-register Map key)") -ForegroundColor Green
 }
 
-# 4. 计算并提取证书 SHA1 指纹
+# 5. 计算并提取证书 SHA1 指纹
 $certDer = Join-Path $keystoreDir "certificate.der"
 if (Test-Path $certDer) { Remove-Item -LiteralPath $certDer -Force -ErrorAction SilentlyContinue }
 & $keytoolExe -exportcert -keystore $keyfile -storepass $password -alias $alias -file $certDer 2>$null
@@ -183,7 +202,46 @@ if (-not (Test-Path $certDer)) {
 $sha1 = (Get-FileHash -LiteralPath $certDer -Algorithm SHA1).Hash -replace '(..)(?!$)', '$1:'
 Remove-Item -LiteralPath $certDer -Force -ErrorAction SilentlyContinue
 
-# 5. 调用 apksigner 极速重签名 (仅需 1~2 秒)
+# 6. 动态就地修改 APK 内部包名为专属包名 (0.05秒完成，无需编译)
+Write-Host (T "-> 正在注入个人专属包名到安装包..." "-> Injecting personal package name into APK...") -ForegroundColor Yellow
+
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$outputApk = Join-Path $workDir "esp32_Navigation-personal.apk"
+if (Test-Path $outputApk) { Remove-Item -LiteralPath $outputApk -Force -ErrorAction SilentlyContinue }
+Copy-Item -LiteralPath $templateApk -Destination $outputApk -Force
+
+# 打开 APK 修改 AndroidManifest.xml
+$zip = [System.IO.Compression.ZipFile]::Open($outputApk, [System.IO.Compression.ZipArchiveMode]::Update)
+$manifestEntry = $zip.GetEntry("AndroidManifest.xml")
+
+if ($manifestEntry) {
+    $ms = New-Object System.IO.MemoryStream
+    $s = $manifestEntry.Open()
+    $s.CopyTo($ms)
+    $s.Dispose()
+    $bytes = $ms.ToArray()
+    
+    # 查找 UTF-16LE 编码的包名模式 (org.esp32nav.u... 或 com.motonav.u...)
+    $latin1 = [System.Text.Encoding]::GetEncoding("iso-8859-1")
+    $pattern = [System.Text.RegularExpressions.Regex]"o\x00r\x00g\x00\.\x00e\x00s\x00p\x003\x002\x00n\x00a\x00v\x00\.\x00u\x00[a-f0-9\x00]{64}|c\x00o\x00m\x00\.\x00m\x00o\x00t\x00o\x00n\x00a\x00v\x00\.\x00u\x00[a-f0-9\x00]{64}"
+    $match = $pattern.Match($latin1.GetString($bytes))
+    
+    if ($match.Success) {
+        $idx = $match.Index
+        $newBytes = [System.Text.Encoding]::Unicode.GetBytes($appId)
+        [System.Buffer]::BlockCopy($newBytes, 0, $bytes, $idx, $newBytes.Length)
+        $manifestEntry.Delete()
+        $newEntry = $zip.CreateEntry("AndroidManifest.xml", [System.IO.Compression.CompressionLevel]::Optimal)
+        $ws = $newEntry.Open()
+        $ws.Write($bytes, 0, $bytes.Length)
+        $ws.Dispose()
+    }
+}
+$zip.Dispose()
+
+# 7. 调用 apksigner 极速重签名 (仅需 1~2 秒)
 Write-Host (T "-> 正在使用专属证书签名 APK (1~2秒完成)..." "-> Signing APK with your unique certificate...") -ForegroundColor Yellow
 
 $apksignerJar = Join-Path $toolsDir "apksigner.jar"
@@ -192,25 +250,25 @@ if (-not (Test-Path $apksignerJar)) {
     exit 1
 }
 
-$outputApk = Join-Path $workDir "esp32_Navigation-personal.apk"
-if (Test-Path $outputApk) { Remove-Item -LiteralPath $outputApk -Force -ErrorAction SilentlyContinue }
+$tempSigned = Join-Path $workDir "esp32_Navigation-personal-signed.apk"
+if (Test-Path $tempSigned) { Remove-Item -LiteralPath $tempSigned -Force -ErrorAction SilentlyContinue }
 
 & $javaExe -jar $apksignerJar sign `
     --ks $keyfile `
     --ks-pass "pass:$password" `
     --key-pass "pass:$password" `
     --ks-key-alias $alias `
-    --out $outputApk `
-    $templateApk 2>$null
+    --out $tempSigned `
+    $outputApk 2>$null
 
-if (-not (Test-Path $outputApk)) {
+if (Test-Path $tempSigned) {
+    Move-Item -LiteralPath $tempSigned -Destination $outputApk -Force
+} else {
     Write-Host (T "【错误】APK 签名失败！" "[Error] APK signing failed!") -ForegroundColor Red
     exit 1
 }
 
-$packageName = "com.example.motonav"
-
-# 6. 生成高德 Key 申请指引文件
+# 8. 生成高德 Key 申请指引文件
 $infoPath = Join-Path $workDir "高德Key申请信息.txt"
 $infoContent = @"
 ======================================================================
@@ -218,7 +276,7 @@ $infoContent = @"
 ======================================================================
 
 【应用包名】:
-$packageName
+$appId
 
 【专属 SHA1 安全码】:
 $sha1
@@ -231,14 +289,15 @@ $sha1
    - Key 名称: 任意填写 (如: 手机端)
    - 服务平台: 务必勾选【Android 平台】
    - 发布版安全码 SHA1: 粘贴上方专属 SHA1
-   - PackageName: 粘贴上方应用包名
+   - PackageName: 粘贴上方应用包名 ($appId)
 4. 点击提交后，复制生成的【Key】(一串英文字母和数字)。
 5. 打开手机上的 esp32_Navigation App，进入设置页将 Key 粘贴保存即可！
 ======================================================================
 "@
-[System.IO.File]::WriteAllText($infoPath, $infoContent, [System.Text.Encoding]::UTF8)
+$utf8BOM = New-Object System.Text.UTF8Encoding($true)
+[System.IO.File]::WriteAllText($infoPath, $infoContent, $utf8BOM)
 
-# 7. 打印结果
+# 9. 打印结果
 Write-Host ""
 Write-Host "======================================================================" -ForegroundColor Green
 Write-Host (T "  恭喜！专属安装包生成成功！(耗时仅需数秒，已就绪)" "  Congratulations! Personalized APK is ready!") -ForegroundColor Green
@@ -246,8 +305,8 @@ Write-Host "====================================================================
 Write-Host ""
 Write-Host (T "【生成安装包】: " "[Output APK  ]: ") -NoNewline
 Write-Host $outputApk -ForegroundColor Cyan
-Write-Host (T "【应用包名  】: " "[PackageName ]: ") -NoNewline
-Write-Host $packageName -ForegroundColor White
+Write-Host (T "【专属包名  】: " "[PackageName ]: ") -NoNewline
+Write-Host $appId -ForegroundColor Yellow
 Write-Host (T "【证书 SHA1 】: " "[Cert SHA1   ]: ") -NoNewline
 Write-Host $sha1 -ForegroundColor Yellow
 Write-Host ""
