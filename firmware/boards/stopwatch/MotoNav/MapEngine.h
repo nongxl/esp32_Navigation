@@ -115,6 +115,7 @@ uint8_t *routeCurv = nullptr;     // v6.1 每个路线点的弯急程度：0 直
 int trafN = 0;
 int32_t trafA[TRAF_MAX], trafB[TRAF_MAX];
 uint8_t trafS[TRAF_MAX];
+
 // v5.0 提示条：重新规划中（"#y,1/0"）、更快路线（"#h,省几分钟" / "#h"）、GPS 信号弱（"#x,1/0"）
 unsigned long rerouteAt = 0, fasterAt = 0;
 int fasterMin = 0;
@@ -2174,14 +2175,18 @@ float routeUAt(float m) {
   return lo + (seg > 0 ? (m - routeCum[lo]) / seg : 0);
 }
 
-// v5.0 路况颜色：缓行黄、拥堵红、严重拥堵深红，盖在导航路线上（已经走过的部分不画）
+// v5.0/v7.13 沿途实时路况光带：畅通绿、缓行黄、拥堵红、严重拥堵深褐红，与手机高德导航完全一致
 void drawTraffic(float cx, float cy, float sc, float cs, float sn, float viewR, float w0, float w1, float from) {
   if (trafN == 0 || routeN < 2 || routeFrame != posFrame) return;
   for (int i = 0; i < trafN; i++) {
     float a = fmaxf(routeUAt(trafA[i]), from), b = routeUAt(trafB[i]);
     if (b <= a) continue;
-    uint16_t c = trafS[i] >= 4 ? 0x9000 : trafS[i] == 3 ? 0xE8E4 : 0xFDA0;
-    drawRouteRange(a, b, cx, cy, sc, cs, sn, viewR, w0, w1, C_ROUTE2, c);
+    uint16_t c;
+    if (trafS[i] >= 4) c = 0x8880;        // 严重拥堵：深褐红
+    else if (trafS[i] == 3) c = 0xF9A4;   // 拥堵：鲜红
+    else if (trafS[i] == 2) c = 0xFDE0;   // 缓行：暖橙黄
+    else c = 0x05E0;                     // 畅通：鲜亮翠绿
+    drawRouteRange(a, b, cx, cy, sc, cs, sn, viewR, w0, w1, 0x18C3, c);
   }
 }
 

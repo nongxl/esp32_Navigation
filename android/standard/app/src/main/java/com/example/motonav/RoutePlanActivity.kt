@@ -326,6 +326,7 @@ class RoutePlanActivity : AppCompatActivity() {
         val m = mapView.map ?: return
         aMap = m
         m.setMapType(if (MapFeeder.nightNow) AMap.MAP_TYPE_NIGHT else AMap.MAP_TYPE_NORMAL)
+        m.isTrafficEnabled = true
         m.uiSettings.setZoomControlsEnabled(false)
         m.uiSettings.setMyLocationButtonEnabled(false)
         m.uiSettings.setTiltGesturesEnabled(false)
@@ -959,6 +960,7 @@ class RoutePlanActivity : AppCompatActivity() {
             try {
                 val ov = RouteOverLay(m, p, this)
                 try { ov.setArrowOnRoute(false) } catch (_: Throwable) {}
+                try { ov.setTrafficLine(true) } catch (_: Throwable) {}
                 ov.addToMap()
                 overlays[id] = ov
             } catch (_: Throwable) {}
@@ -1005,8 +1007,10 @@ class RoutePlanActivity : AppCompatActivity() {
         try {
             val p=availablePaths()[id]
             val coords=p?.coordList
-            if (p!=null && coords!=null && coords.size>=2)
+            if (p!=null && coords!=null && coords.size>=2) {
                 MapFeeder.prepareRoute(this,"${p.pathid}:${p.allLength}",coords.map { doubleArrayOf(it.latitude,it.longitude) })
+                NaviBridge.pushTraffic(p)
+            }
         } catch (_: Exception) { }
     }
 
@@ -1043,6 +1047,35 @@ class RoutePlanActivity : AppCompatActivity() {
             }
             card.addView(TextView(this).apply {
                 text = info; textSize = 11.5f; setTextColor(S.SUB); isSingleLine = true; ellipsize = TextUtils.TruncateAt.END
+            })
+            val tfList = (Refl.call(p, "getTrafficStatuses").second as? List<*>)
+                ?: (Refl.call(p, "trafficStatuses").second as? List<*>)
+            var jamM = 0
+            var slowM = 0
+            if (tfList != null) {
+                for (t in tfList) {
+                    val len = Refl.int(t, "getLength", "length") ?: 0
+                    val st = Refl.int(t, "getStatus", "status") ?: 0
+                    if (st >= 3) jamM += len
+                    else if (st == 2) slowM += len
+                }
+            }
+            val tfTag = when {
+                jamM > 1000 -> "🔴 拥堵${String.format(java.util.Locale.US, "%.1f", jamM / 1000f)}km"
+                jamM > 0 -> "🔴 拥堵${jamM}m"
+                slowM > 1000 -> "🟡 缓行${String.format(java.util.Locale.US, "%.1f", slowM / 1000f)}km"
+                slowM > 0 -> "🟡 缓行${slowM}m"
+                else -> "🟢 畅通"
+            }
+            val tfColor = when {
+                jamM > 0 -> 0xFFF44336.toInt()
+                slowM > 0 -> 0xFFFFB300.toInt()
+                else -> 0xFF4CAF50.toInt()
+            }
+            card.addView(TextView(this).apply {
+                text = tfTag; textSize = 11f; setTextColor(tfColor); typeface = S.MEDIUM
+                setPadding(0, dp(2), 0, 0)
+                isSingleLine = true
             })
             cardsRow.addView(card, LinearLayout.LayoutParams(0, -2, 1f).apply {
                 if (i > 0) leftMargin = dp(8)

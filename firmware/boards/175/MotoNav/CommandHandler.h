@@ -138,6 +138,16 @@ void handleText(const String &m) {
   }
 
   if (m.startsWith("#v,")) { speedKmh = m.substring(3).toInt(); navDirty = true; return; }
+  if (m.startsWith("#a,")) {
+    int alt = 0, slp = 0;
+    if (sscanf(m.c_str(), "#a,%d,%d", &alt, &slp) >= 1) {
+      altitudeM = alt;
+      slopePct = slp;
+      altValid = true;
+      leanDirty = true;
+    }
+    return;
+  }
   if (m.startsWith("#k")) {
     int c1 = m.indexOf(','), c2 = m.indexOf(',', c1 + 1);
     if (c1 > 0 && c2 > c1) {

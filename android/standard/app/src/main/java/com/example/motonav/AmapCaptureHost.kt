@@ -49,7 +49,7 @@ class AmapCaptureHost private constructor(private val context: Context,private v
         map.uiSettings.isZoomControlsEnabled=false
         map.uiSettings.isCompassEnabled=false
         map.uiSettings.isScaleControlsEnabled=false
-        map.isMyLocationEnabled=false; map.isTrafficEnabled=false
+        map.isMyLocationEnabled=false; map.isTrafficEnabled=true
         map.mapType=AMap.MAP_TYPE_NORMAL
         map.showBuildings(false); map.showIndoorMap(false); map.showMapText(captureStyle==MapStylePolicy.ORIGINAL)
         map.setOnMapLoadedListener { if (alive) { loaded=true; AmapSdkRaster.state="高德无字底图已就绪" } }

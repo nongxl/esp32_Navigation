@@ -19,8 +19,35 @@ void drawLeanMeter() {
   frameIsMap = false;
   gfx->fillScreen(C_BLACK);
 
-  // 1. 顶部状态栏：优雅小圆点
-  aaDisc(CX - 150, 28, 4.0f, bleConnected ? LEAN_COLOR_SAFE : 0x632C);
+  // 1. 顶部状态栏与实时海拔坡度胶囊 (阶段一特性：实时海拔高度与路段坡度)
+  aaDisc(CX - 124, 30, 4.0f, bleConnected ? LEAN_COLOR_SAFE : 0x632C);
+
+  const int ALT_W = 196, ALT_H = 28, ALT_Y = 16;
+  const int ALT_X = CX - ALT_W / 2;
+  drawTranslucentRoundRect(ALT_X, ALT_Y, ALT_W, ALT_H, 14, 0x0000, 185);
+  gfx->drawRoundRect(ALT_X, ALT_Y, ALT_W, ALT_H, 14, 0x31A6);
+
+  char altBuf[16];
+  if (altValid) snprintf(altBuf, sizeof(altBuf), "%dm", altitudeM);
+  else snprintf(altBuf, sizeof(altBuf), "--m");
+
+  char slpBuf[16];
+  if (altValid) {
+    if (slopePct > 0) snprintf(slpBuf, sizeof(slpBuf), "+%d%%", slopePct);
+    else snprintf(slpBuf, sizeof(slpBuf), "%d%%", slopePct);
+  } else snprintf(slpBuf, sizeof(slpBuf), "--%%");
+
+  // 左半边：海拔 ALT
+  drawAaString(ALT_X + 28, ALT_Y + 14, "ALT", 1.25f, 0.80f, 9.0f, 0x8410, true);
+  drawAaString(ALT_X + 66, ALT_Y + 14, altBuf, 1.7f, 1.05f, 12.0f, C_WHITE, true);
+
+  // 中间精致微分割线
+  gfx->drawFastVLine(ALT_X + 98, ALT_Y + 6, ALT_H - 12, 0x31A6);
+
+  // 右半边：路段坡度 SLOPE
+  drawAaString(ALT_X + 130, ALT_Y + 14, "SLOPE", 1.25f, 0.80f, 9.0f, 0x8410, true);
+  uint16_t slpColor = (altValid && abs(slopePct) >= 5) ? LEAN_COLOR_WARN : C_WHITE;
+  drawAaString(ALT_X + 170, ALT_Y + 14, slpBuf, 1.7f, 1.05f, 12.0f, slpColor, true);
 
   const int CY = CX; // 466x466 圆屏中心 (233, 233)
   const float CX_DIAL = (float)CX;
