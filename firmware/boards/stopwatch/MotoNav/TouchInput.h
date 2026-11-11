@@ -288,9 +288,9 @@ void touchPoll() {
       int cy0 = (int)lroundf(CX + tdy0);
       // 导航地图页面：双击按住缩放检测
       if (page == 0 && (inNav || cruiseOn || mapModeActive()) && !callOn && !pairOn && !fxOn) {
-        // 双击时间窗口放宽至 750ms；彻底解除两次点击必须在同一区域的苛刻限制（只要在有效触控圆内即可识别为双击）
+        // 双击时间窗口放宽至 850ms；只要在有效触控圆内即可识别为双击
         float tdx = x[0] - CX, tdy = y[0] - CX;
-        if (lastMapTapAt > 0 && (now - lastMapTapAt <= 750) && (tdx * tdx + tdy * tdy <= 225.0f * 225.0f)) {
+        if (lastMapTapAt > 0 && (now - lastMapTapAt <= 850) && (tdx * tdx + tdy * tdy <= 230.0f * 230.0f)) {
           mapZoomActive = true;
           touchEat = true;
           mapZoomStartX = x[0];
@@ -432,14 +432,25 @@ void touchPoll() {
       mapZoomActive = false;
       touchEat = true;
       mapZoomSaveAt = now + 1500;
-      mapZoomHintUntil = now + 1200;
+      mapZoomHintUntil = now + 2000;
+      float dragDist = hypotf((float)(touchX1 - mapZoomStartX), (float)(touchY1 - mapZoomStartY));
+      // 如果用户是快速双击抬手（位移小于 35 像素且单次按压小于 500ms），触发阶梯式步进循环放大
+      if (pressDuration < 500 && dragDist < 35.0f) {
+        float cur = mapZoomStartScale;
+        float nextScale = 1.0f;
+        if (cur < 1.25f) nextScale = 1.4f;
+        else if (cur < 1.75f) nextScale = 2.0f;
+        else if (cur < 2.5f) nextScale = 0.75f;
+        else nextScale = 1.0f;
+        userMapScale = nextScale;
+      }
       CompanionMode::startVibration(90, 35);
       navDirty = true;
     } else if (page == 0 && (inNav || cruiseOn || mapModeActive()) && !callOn && !pairOn && !fxOn) {
       float vx = touchX1 - touchX0, vy = touchY1 - touchY0;
       touchVectorToCanvas(vx, vy);
-      // 放宽轻触判定：按压时长放宽至 550ms，位移容差放宽至 85 像素（防骑行手套与路面抖动）
-      if (pressDuration >= 15 && pressDuration < 550 && abs(vx) <= 85 && abs(vy) <= 85) {
+      // 放宽轻触判定：按压时长放宽至 15~650ms，位移容差放宽至 110 像素（防骑行手套与路面颠簸）
+      if (pressDuration >= 15 && pressDuration < 650 && abs(vx) <= 110 && abs(vy) <= 110) {
         lastMapTapAt = now;
         lastMapTapX = touchX0;
         lastMapTapY = touchY0;

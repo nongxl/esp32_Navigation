@@ -19,15 +19,15 @@ import androidx.core.view.WindowInsetsCompat
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** Five independent, lazily created pages; bottom navigation never scrolls away. */
+/** Three independent, lazily created pages; bottom navigation never scrolls away. */
 class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
                      private val build:(Int)->View, private val onSelected:(Int)->Unit):LinearLayout(activity) {
     private val S=NavStyle
     private fun dp(v:Int)=S.dpi(activity,v)
-    private val titles=listOf("首页搜索","圆屏显示","导航语音","圆屏设置","地图 Key")
+    private val titles=listOf("导航","圆屏设置","导航设置")
     private val host=FrameLayout(activity)
-    private val pages=arrayOfNulls<ScrollView>(5)
-    private val restoreY=saved?.getIntArray("main_page_scroll")?.takeIf{it.size==5} ?: IntArray(5)
+    private val pages=arrayOfNulls<ScrollView>(3)
+    private val restoreY=saved?.getIntArray("main_page_scroll")?.takeIf{it.size==3} ?: IntArray(3)
     private val tabs=ArrayList<LinearLayout>()
     private val icons=ArrayList<PageIcon>()
     private val labels=ArrayList<TextView>()
@@ -51,9 +51,9 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
             val indicator=FrameLayout(activity)
             val icon=PageIcon(index)
             indicator.addView(icon,FrameLayout.LayoutParams(dp(23),dp(23),Gravity.CENTER))
-            tab.addView(indicator,LayoutParams(dp(44),dp(29)))
+            tab.addView(indicator,LayoutParams(dp(56),dp(29)))
             val label=TextView(activity).apply {
-                text=title;textSize=11.5f;setTextColor(S.SUB);gravity=Gravity.CENTER
+                text=title;textSize=12f;setTextColor(S.SUB);gravity=Gravity.CENTER
                 isSingleLine=true;includeFontPadding=false;setPadding(0,dp(4),0,0)
             }
             tab.addView(label,LayoutParams(-1,-2))
@@ -69,7 +69,7 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
     }
 
     fun showPage(index:Int) {
-        if(index !in 0..4)return
+        if(index !in 0..2)return
         pages[selectedPage]?.visibility=GONE
         selectedPage=index
         val page=pages[index] ?: ScrollView(activity).apply {
@@ -91,7 +91,7 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
 
     fun save(out:Bundle) {
         out.putInt("main_page_selected",selectedPage)
-        out.putIntArray("main_page_scroll",IntArray(5){pages[it]?.scrollY ?: restoreY[it]})
+        out.putIntArray("main_page_scroll",IntArray(3){pages[it]?.scrollY ?: restoreY[it]})
     }
 
     private inner class PageIcon(private val index:Int):View(activity) {
@@ -105,28 +105,22 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
             canvas.save();canvas.scale(width/24f,height/24f);paint.color=if(active)S.PINK else S.SUB
             fun line(x1:Float,y1:Float,x2:Float,y2:Float)=canvas.drawLine(x1,y1,x2,y2,paint)
             when(index) {
-                0->{
-                    canvas.drawPath(Path().apply{moveTo(3f,10f);lineTo(12f,3f);lineTo(21f,10f)},paint)
-                    canvas.drawPath(Path().apply{moveTo(6f,9f);lineTo(6f,21f);lineTo(18f,21f);lineTo(18f,9f)},paint)
-                    canvas.drawPath(Path().apply{moveTo(10f,21f);lineTo(10f,14f);lineTo(14f,14f);lineTo(14f,21f)},paint)
-                }
-                1->{
+                0->{ // 导航：指南针/航向罗盘
                     canvas.drawCircle(12f,12f,9f,paint)
-                    canvas.drawPath(Path().apply{moveTo(7f,16f);lineTo(10f,13f);lineTo(14f,14f);lineTo(17f,8f)},paint)
-                    canvas.drawCircle(17f,8f,1f,paint)
+                    canvas.drawPath(Path().apply{
+                        moveTo(12f,5f);lineTo(15f,12f);lineTo(12f,19f);lineTo(9f,12f);close()
+                    },paint)
+                    line(12f,3f,12f,5f)
                 }
-                2->{
-                    canvas.drawPath(Path().apply{moveTo(4f,9f);lineTo(8f,9f);lineTo(12f,5f);lineTo(12f,19f);lineTo(8f,15f);lineTo(4f,15f);close()},paint)
-                    canvas.drawArc(RectF(10f,7f,20f,17f),-55f,110f,false,paint)
-                    canvas.drawArc(RectF(7f,3f,24f,21f),-50f,100f,false,paint)
-                }
-                3->{
+                1->{ // 圆屏设置：圆屏硬件 + 齿轮
                     canvas.drawCircle(12f,12f,6.5f,paint);canvas.drawCircle(12f,12f,2.5f,paint)
                     repeat(8){val a=it*Math.PI/4;line((12+6.5*cos(a)).toFloat(),(12+6.5*sin(a)).toFloat(),(12+9*cos(a)).toFloat(),(12+9*sin(a)).toFloat())}
                 }
-                4->{
-                    canvas.drawCircle(8f,8f,4.5f,paint);line(11f,11f,21f,21f)
-                    line(16f,16f,19f,13f);line(19f,19f,22f,16f)
+                2->{ // 导航设置：控制滑块/参数设置
+                    line(4f,7f,20f,7f);line(4f,12f,20f,12f);line(4f,17f,20f,17f)
+                    canvas.drawCircle(8f,7f,2.2f,paint)
+                    canvas.drawCircle(16f,12f,2.2f,paint)
+                    canvas.drawCircle(11f,17f,2.2f,paint)
                 }
             }
             canvas.restore()

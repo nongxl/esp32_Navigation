@@ -209,7 +209,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var mainPages: MainPagesShell
-    private val pageRefreshers = Array(5) { ArrayList<() -> Unit>() }
+    private val pageRefreshers = Array(3) { ArrayList<() -> Unit>() }
 
     private fun buildMainPages(saved: Bundle?) {
         mainPages = MainPagesShell(this, saved, { index -> buildMainPage(index) }) { index ->
@@ -234,8 +234,8 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(20))
         }
-        val titles = listOf("首页搜索", "圆屏显示", "导航语音", "圆屏设置", "地图 Key")
-        content.addView(pageHeader(if (index == 0) "esp32_Navigation" else titles[index]))
+        val titles = listOf("导航", "圆屏设置", "导航设置")
+        content.addView(pageHeader(if (index == 0) "esp32Nav" else titles[index]))
         fun settingsBody(build: (LinearLayout) -> Unit) {
             val box = card(); build(box); content.addView(wrapMargin(box))
         }
@@ -266,25 +266,31 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             1 -> {
+                // 圆屏设置：整合圆屏状态、屏幕显示、小地图风格与开发者选项
+                content.addView(statusCard())
                 val summary = label("", 13f, SUB).apply { setPadding(dp(4), 0, 0, dp(14)) }
                 content.addView(summary); refreshers += { summary.text = mapSummary() }
-                settingsBody { mapSection(it) }
-            }
-            2 -> {
-                val summary = label("", 13f, SUB).apply { setPadding(dp(4), 0, 0, dp(14)) }
-                content.addView(summary); refreshers += { summary.text = voiceSummary() }
-                settingsBody { voiceSection(it) }
-            }
-            3 -> {
-                content.addView(statusCard())
-                settingsBody { screenSection(it) }
+                settingsBody {
+                    screenSection(it)
+                    it.addView(divider(16))
+                    mapSection(it)
+                }
                 devWrap = section("dev", "🛠", "开发者选项", { "调试信息、测试按钮、屏幕速度、地图来源" }) { devSection(it) }.apply {
                     visibility = if (uiPrefs.getBoolean("dev_mode", false)) View.VISIBLE else View.GONE
                 }
                 content.addView(devWrap)
                 content.addView(exitButton())
             }
-            4 -> settingsBody { keySection(it) }
+            2 -> {
+                // 导航设置：整合地图 Key 配置与导航语音播报
+                val summary = label("", 13f, SUB).apply { setPadding(dp(4), 0, 0, dp(14)) }
+                content.addView(summary); refreshers += { summary.text = voiceSummary() }
+                settingsBody {
+                    keySection(it)
+                    it.addView(divider(16))
+                    voiceSection(it)
+                }
+            }
         }
         val callbacks = refreshers.subList(firstCallback, refreshers.size)
         pageRefreshers[index].addAll(callbacks.toList()); callbacks.clear()
@@ -314,7 +320,7 @@ class MainActivity : AppCompatActivity() {
         val state = label("", 12f, SUB).apply { isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END }
         row.addView(state, LinearLayout.LayoutParams(0, -2, 1f))
         row.addView(label("圆屏设置 ›", 12f, CYAN))
-        row.setOnClickListener { mainPages.showPage(3) }
+        row.setOnClickListener { mainPages.showPage(1) }
         refreshers += {
             val ready = BleLink.isConnected && BleLink.verified
             setDot(dot, if (ready) GREEN else AMBER)
@@ -1235,7 +1241,7 @@ class MainActivity : AppCompatActivity() {
         val on = !uiPrefs.getBoolean("dev_mode", false)
         uiPrefs.edit().putBoolean("dev_mode", on).apply()
         devWrap?.visibility = if (on) View.VISIBLE else View.GONE
-        if (on) mainPages.showPage(3)
+        if (on) mainPages.showPage(1)
         toast(if (on) "已打开开发者选项（圆屏设置页底部）" else "已隐藏开发者选项")
     }
 

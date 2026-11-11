@@ -4,6 +4,27 @@
 #include "UiModern.h"
 #include "DestHistory.h"
 
+#ifndef U8G2_FONT_SECTION
+#define U8G2_FONT_SECTION(name)
+#endif
+#include "font/u8g2_font_unifont_h_chinese4.h"
+
+// 绘制中文/多语言与 ASCII 混排文本 (基于 u8g2 unifont 汉字字模库)
+static inline void drawTextUTF8(int x, int y, const char *str, uint16_t color) {
+  if (!str || !str[0]) return;
+  #if defined(U8G2_FONT_SUPPORT)
+  gfx->setFont(u8g2_font_unifont_h_chinese4);
+  gfx->setUTF8Print(true);
+  gfx->setTextSize(1);
+  gfx->setTextColor(color);
+  gfx->setCursor(x, y);
+  gfx->print(str);
+  gfx->setFont((const uint8_t*)nullptr);
+  #else
+  drawAaString((float)x, (float)y, str, 1.6f, 0.9f, 11.0f, color, false);
+  #endif
+}
+
 // 全局变量定义
 DestItem destItems[MAX_DEST_ITEMS];
 int destItemCount = 0;
@@ -109,11 +130,11 @@ static void drawDestinationsSheet() {
       aaDisc(itemX + 24, curY + itemH / 2 - 3, 2.0f, C_BLACK);
     }
 
-    // 地点名称与地址
+    // 地点名称与地址 (支持中文与中英混排)
     const char *name = destItems[i].name[0] ? destItems[i].name : "Unknown Location";
     const char *addr = destItems[i].addr[0] ? destItems[i].addr : "Tap to route";
-    drawAaString(itemX + 54, curY + 18, name, 1.8f, 1.0f, 12.0f, C_WHITE, false);
-    drawAaString(itemX + 54, curY + 38, addr, 1.3f, 0.8f, 9.0f, 0x7BEF, false);
+    drawTextUTF8(itemX + 54, curY + 25, name, C_WHITE);
+    drawTextUTF8(itemX + 54, curY + 45, addr, 0x7BEF);
 
     // 右侧导航箭头 (>)
     drawAaString(itemX + itemW - 18, curY + itemH / 2, ">", 1.8f, 1.0f, 10.0f, 0x4A69, true);
@@ -251,6 +272,16 @@ inline bool waitingScreenTap(int x, int y) {
     }
     drawWaiting(waitSt);
     return true;
+  }
+
+  // 需求 2：圆屏已连接 app 的情况下，在圆屏首页点击空白区域可进入巡航模式
+  if (bleConnected && bleAuthed) {
+    int distSq = (x - CX) * (x - CX) + (y - CX) * (y - CX);
+    if (distSq <= 210 * 210) {
+      CompanionMode::startVibration(70, 30);
+      pendingEvt = "T,CRUISE";
+      return true;
+    }
   }
 
   return false;

@@ -47,7 +47,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             activeNavigationBanner
             ZStack {
-                ForEach(0..<5) { index in
+                ForEach(0..<3) { index in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
                             header
@@ -97,21 +97,26 @@ struct ContentView: View {
                                 }
                                 destCard
                                 favoritesCard
-                            } else if index == 1 { displayCard }
-                            else if index == 2 { voiceCard }
-                            else if index == 3 { statusCard; settingsCard; debugCard }
-                            else { keyCard }
+                            } else if index == 1 {
+                                statusCard
+                                settingsCard
+                                displayCard
+                                debugCard
+                            } else {
+                                keyCard
+                                voiceCard
+                            }
                         }.padding(16)
                     }.opacity(page == index ? 1 : 0).allowsHitTesting(page == index).accessibilityHidden(page != index)
                 }
             }
             HStack(spacing: 0) {
-                ForEach(0..<5) { index in
+                ForEach(0..<3) { index in
                     Button { hideKeyboard(); page = index } label: {
                         VStack(spacing: 4) {
-                            Image(systemName: ["magnifyingglass", "map", "speaker.wave.2", "gearshape", "key"][index])
+                            Image(systemName: ["location.north.circle.fill", "gearshape.2.fill", "slider.horizontal.3"][index])
                                 .font(.system(size: 18))
-                            Text(["首页搜索", "圆屏显示", "导航语音", "圆屏设置", "地图 Key"][index]).font(.system(size: 10))
+                            Text(["导航", "圆屏设置", "导航设置"][index]).font(.system(size: 11))
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 9)
@@ -162,7 +167,7 @@ struct ContentView: View {
     // MARK: 标题
     private var header: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("esp32_Navigation")
+            Text("esp32Nav")
                 .font(.system(size: 28, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
             Text("全场景随行智能导航与副屏 · \(APP_VERSION)").font(.footnote).foregroundColor(ContentView.sub)
