@@ -364,16 +364,25 @@ class MainActivity : AppCompatActivity() {
     private fun setupCard(): View {
         val card = card()
         card.addView(label("出发前准备", 15f, TEXT, bold = true))
-        card.addView(label("完成下面两项后，锁屏也能稳定给圆屏发数据", 12f, SUB).apply { setPadding(0, dp(2), 0, dp(10)) })
-        val permBtn = pillButton("授予权限", PURPLE) { requestAllPermissions() }
-        val batBtn = pillButton("电池设为「不限制」", PURPLE) { requestIgnoreBatteryOptimization() }
+        card.addView(label("完成下面准备后，锁屏也能稳定发数据，并可在圆屏控制音乐播放与歌词", 12f, SUB).apply { setPadding(0, dp(2), 0, dp(10)) })
+        val permBtn = pillButton("授予基础权限 (定位与蓝牙)", PURPLE) { requestAllPermissions() }
+        val batBtn = pillButton("电池设为「不限制」(防后台断连)", PURPLE) { requestIgnoreBatteryOptimization() }
+        val notifBtn = pillButton("开启「通知使用权」(音乐播放与歌词)", PURPLE) {
+            try {
+                startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+            } catch (_: Exception) {
+                toast("请在系统设置中搜索并开启「通知使用权」")
+            }
+        }
         card.addView(permBtn, lpMatch(bottom = 8))
-        card.addView(batBtn, lpMatch())
+        card.addView(batBtn, lpMatch(bottom = 8))
+        card.addView(notifBtn, lpMatch())
         refreshers += {
-            val p = hasPermissions(); val b = isIgnoringBatteryOptimization()
+            val p = hasPermissions(); val b = isIgnoringBatteryOptimization(); val n = AmapProbe.notifEnabled(this)
             permBtn.visibility = if (p) View.GONE else View.VISIBLE
             batBtn.visibility = if (b) View.GONE else View.VISIBLE
-            card.visibility = if (p && b) View.GONE else View.VISIBLE
+            notifBtn.visibility = if (n) View.GONE else View.VISIBLE
+            card.visibility = if (p && b && n) View.GONE else View.VISIBLE
         }
         return wrapMargin(card)
     }

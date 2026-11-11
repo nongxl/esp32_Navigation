@@ -2686,10 +2686,7 @@ void drawMapFrame() {
   if (!cruiseOn) drawDestBlip(cx, cy, sc, cs, sn);      // v2.9 目的地标记（v7.6 巡航没有目的地）
   drawPlayer(CX, effectiveMapPy);
   profMark(3);
-  {
-    int st = styleIdx();                                // v6.1 纸地图、蓝图、掌机像素不压暗边缘
-    if (st != 0 && st != ST_MINIMAL && st != ST_DRAGON && st != ST_PAPER && st != ST_BLUEPRINT && st != ST_PIXEL) drawVignette(178, 211, 150);   // v2.9 雷达边缘渐暗
-  }
+  // v7.13 去除暗角/雷达边缘压暗，充分利用圆形屏幕显示空间
   profMark(4);
   if (styleIdx() == ST_COMPASS) drawCompassRose(viewHdg);   // v6.1 罗盘刻度
   else if (!dragon) drawNorth(viewHdg);                              // v2.9 北向标记

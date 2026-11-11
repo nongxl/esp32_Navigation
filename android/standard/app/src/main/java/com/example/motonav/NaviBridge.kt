@@ -188,6 +188,10 @@ object NaviBridge {
 
     /** v3.0 退出自己的导航界面：停止导航，圆屏回到待机 */
     fun exitNavi() {
+        if (cruising) {
+            stopCruise()
+            return
+        }
         val epoch = arrivalSession.generation()
         // stopNavi may synchronously emit onEndEmulatorNavi. Close before asking the SDK to stop.
         arrivalSession.cancel(epoch)

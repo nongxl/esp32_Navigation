@@ -315,14 +315,7 @@ static inline void drawThemedMapBackground() {
       int r2 = dx * dx + dy * dy;
 
       uint16_t c = row[x];
-      uint32_t ratio = baseRatio;
-
-      // 圆屏边缘 175px 外渐变黑色暗角晕轮 (Vignette)
-      if (r2 > 175 * 175) {
-        int dist = (int)sqrtf((float)r2) - 175;
-        int vignette = max(0, (int)baseRatio - dist * 3);
-        ratio = (uint32_t)vignette;
-      }
+      uint32_t ratio = baseRatio; // 移除 175px 边缘暗角遮罩，使背景地图完整铺满全屏
 
       // 安全分离 RGB565 三通道独立缩放，彻底杜绝位移重叠导致的纯蓝色偏！
       uint32_t r = ((c >> 11) & 0x1F) * ratio >> 8;

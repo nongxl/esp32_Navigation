@@ -2616,6 +2616,7 @@ void Arduino_GFX::setFont(const uint8_t *font)
 {
   gfxFont = NULL;
   u8g2Font = (uint8_t *)font;
+  if (!font) return;
 
   // extract from u8g2_read_font_info()
   /* offset 0 */

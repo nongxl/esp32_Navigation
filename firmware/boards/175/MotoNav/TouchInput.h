@@ -398,6 +398,31 @@ void touchPoll() {
       }
     }
 
+    // 巡航/导航模式：长按屏幕 1.2 秒退出巡航/导航回到主页
+    if (page == 0 && (inNav || cruiseOn) && !callOn && !pairOn && !fxOn && !mapZoomActive) {
+      float hdx = touchX1 - touchX0, hdy = touchY1 - touchY0;
+      // 长按期间位移小于 40 像素（防止拖动切页或缩放手势误判）
+      if (hdx * hdx + hdy * hdy <= 40 * 40) {
+        if (now - touchHoldAt >= 1200 && !calibTriggered) {
+          calibTriggered = true;
+          touchEat = true;
+          dragAbort();
+          CompanionMode::startVibration(160, 60);
+          cruiseOn = false;
+          inNav = false;
+          mapZoomActive = false;
+          resetNavState();
+          progReset();
+          drawWaiting(waitSt);
+          if (txChar) {
+            txChar->setValue((uint8_t *)"T,EXIT_NAV", 10);
+            txChar->notify();
+          }
+          pendingEvt = "T,EXIT_NAV";
+        }
+      }
+    }
+
     if (mapZoomActive) {
       touchEat = true;
       float vx = touchX1 - mapZoomStartX;

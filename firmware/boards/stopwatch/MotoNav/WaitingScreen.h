@@ -19,7 +19,7 @@ static inline void drawTextUTF8(int x, int y, const char *str, uint16_t color) {
   gfx->setTextColor(color);
   gfx->setCursor(x, y);
   gfx->print(str);
-  gfx->setFont((const uint8_t*)nullptr);
+  gfx->setFont((const GFXfont*)nullptr);
   #else
   drawAaString((float)x, (float)y, str, 1.6f, 0.9f, 11.0f, color, false);
   #endif
