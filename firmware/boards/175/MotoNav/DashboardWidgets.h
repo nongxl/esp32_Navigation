@@ -250,6 +250,58 @@ void drawTextImg(int slot, int y0, uint8_t tint) {
   }
 }
 
+// 绘制全屏歌词高亮行：支持长文本平滑跑马灯横向滚动
+void drawTextImgLyricScroll(int slot, int y0, uint8_t tint, int maxVisibleW = 416) {
+  TextImg &im = imgs[slot];
+  if (!im.show || im.showW == 0 || im.showH == 0) return;
+  int bpr = (im.showW + 1) / 2;
+
+  if (im.showW <= maxVisibleW) {
+    int x0 = CX - im.showW / 2;
+    for (int y = 0; y < im.showH; y++) {
+      for (int x = 0; x < im.showW; x++) {
+        uint8_t a = imgNib(im, bpr, x, y);
+        if (a) gfx->drawPixel(x0 + x, y0 + y, greyColor(a, tint));
+      }
+    }
+    return;
+  }
+
+  int overflow = im.showW - maxVisibleW;
+  const uint32_t PAUSE_MS = 1400;
+  const float SPEED_PX_PER_S = 36.0f;
+  uint32_t scrollDurationMs = (uint32_t)((overflow / SPEED_PX_PER_S) * 1000.0f);
+  uint32_t totalCycleMs = PAUSE_MS + scrollDurationMs + PAUSE_MS + 600;
+
+  uint32_t cycleTime = millis() % totalCycleMs;
+  int scrollX = 0;
+  if (cycleTime < PAUSE_MS) {
+    scrollX = 0;
+  } else if (cycleTime < PAUSE_MS + scrollDurationMs) {
+    float progress = (float)(cycleTime - PAUSE_MS) / (float)scrollDurationMs;
+    scrollX = (int)lroundf(progress * overflow);
+  } else if (cycleTime < PAUSE_MS + scrollDurationMs + PAUSE_MS) {
+    scrollX = overflow;
+  } else {
+    float backProg = (float)(cycleTime - (PAUSE_MS + scrollDurationMs + PAUSE_MS)) / 600.0f;
+    scrollX = (int)lroundf((1.0f - backProg) * overflow);
+  }
+
+  int clipLeft = CX - maxVisibleW / 2;
+  int clipRight = CX + maxVisibleW / 2;
+  int x0 = clipLeft - scrollX;
+  for (int y = 0; y < im.showH; y++) {
+    int py = y0 + y;
+    for (int x = 0; x < im.showW; x++) {
+      int px = x0 + x;
+      if (px >= clipLeft && px < clipRight) {
+        uint8_t a = imgNib(im, bpr, x, y);
+        if (a) gfx->drawPixel(px, py, greyColor(a, tint));
+      }
+    }
+  }
+}
+
 // 'B' slot id part parts wLo wHi h offLo offHi + 数据
 void handleBitmap(const uint8_t *d, int n) {
   if (n < 10) return;

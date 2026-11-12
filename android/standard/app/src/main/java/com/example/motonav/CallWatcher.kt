@@ -152,6 +152,8 @@ object CallWatcher {
     fun syncDestinations() {
         val c = ctx ?: return
         if (!BleLink.isConnected) return
+        val isZh = java.util.Locale.getDefault().language.startsWith("zh")
+        BleLink.send(if (isZh) "#LANG,zh" else "#LANG,en")
         BleLink.send("#DEST,CLR")
         val favs = try { FavoritePlaces.load(c) } catch (_: Exception) { emptyList() }
         for (f in favs.take(6)) {

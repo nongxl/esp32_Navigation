@@ -4,10 +4,12 @@
 
 #define MAX_DEST_ITEMS 8
 
+extern bool isChineseLang;
+
 struct DestItem {
   uint8_t type;  // 0 = 常用收藏 (Star), 1 = 导航历史 (Pin)
-  char name[32]; // 名称 (如 "Home", "Work", "Mall")
-  char addr[32]; // 简短地址
+  char name[64]; // 名称 (如 "Home", "Work", "Mall", "家", "公司")
+  char addr[64]; // 简短地址
   bool valid;
 };
 
@@ -85,5 +87,5 @@ inline void destInitDefaults() {
   if (destItemCount > 0) return;
   destLoadFromNvs();
   if (destItemCount > 0) return;
-  destItemAdd(0, "NO FAVORITES", "Sync from phone App");
+  destItemAdd(0, isChineseLang ? "暂无常用收藏" : "NO FAVORITES", isChineseLang ? "请在手机App中添加" : "Sync from phone App");
 }

@@ -93,6 +93,18 @@ void handleText(const String &m) {
     musicDirty = true;
     return;
   }
+  if (m.startsWith("#LANG,")) {
+    String l = m.substring(6);
+    l.toLowerCase();
+    isChineseLang = (l == "zh" || l.startsWith("zh"));
+    Preferences pr;
+    if (pr.begin("motonav", false)) {
+      pr.putBool("chinese", isChineseLang);
+      pr.end();
+    }
+    needFlush = true;
+    return;
+  }
   if (m == "#DEST,CLR") {
     destItemsClear();
     needFlush = true;
@@ -139,10 +151,12 @@ void handleText(const String &m) {
 
   if (m.startsWith("#v,")) { speedKmh = m.substring(3).toInt(); navDirty = true; return; }
   if (m.startsWith("#a,")) {
-    int alt = 0, slp = 0;
-    if (sscanf(m.c_str(), "#a,%d,%d", &alt, &slp) >= 1) {
+    int alt = 0, slp = 0, clm = 0;
+    int parsed = sscanf(m.c_str(), "#a,%d,%d,%d", &alt, &slp, &clm);
+    if (parsed >= 1) {
       altitudeM = alt;
-      slopePct = slp;
+      if (parsed >= 2) slopePct = slp;
+      if (parsed >= 3) climbAccumM = clm;
       altValid = true;
       leanDirty = true;
     }

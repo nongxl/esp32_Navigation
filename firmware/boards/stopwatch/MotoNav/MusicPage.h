@@ -158,10 +158,9 @@ static void drawCenterVolumeHUD(int vol) {
   gfx->fillTriangle(spkX - 4, spkY - 5, spkX - 4, spkY + 5, spkX + 4, spkY + 10, C_WHITE);
   gfx->fillTriangle(spkX - 4, spkY - 5, spkX + 4, spkY + 10, spkX + 4, spkY - 10, C_WHITE);
 
-  // 喇叭声波 (静音时使用纯白色斜杠，不使用红叉)
+  // 喇叭声波 (音量为 0 静音时右侧只显示单条利落斜杠)
   if (vol == 0) {
-    gfx->drawLine(spkX + 8, spkY - 5, spkX + 16, spkY + 5, C_WHITE);
-    gfx->drawLine(spkX + 9, spkY - 5, spkX + 17, spkY + 5, C_WHITE);
+    gfx->drawLine(spkX + 8, spkY - 6, spkX + 16, spkY + 6, C_WHITE);
   } else {
     const int arcRadii[3] = {8, 13, 18};
     int numArcs = (vol > 70) ? 3 : (vol > 30 ? 2 : 1);
@@ -254,24 +253,34 @@ static void drawLyricsMode() {
     drawTextImg(5, 42, 0x88);
   }
 
-  // 2. 歌词三行立体排布 (圆屏正中央区域最宽，适合大字号当前行)
+  // 2. 歌词五行立体排布 (去掉进度条，文字放大两行，当前行支持横向平滑滚动)
   int yOffset = (int)lroundf(lyricScrollOffset);
   bool hasLyrics = (imgs[12].show && imgs[12].showW > 0);
 
   if (hasLyrics) {
-    // 上一句歌词 (槽位 13)：字号较小，0x68 半透明暗调，形成纵深聚焦对比
-    if (imgs[13].show && imgs[13].showW > 0) {
-      int prevY = CX - 72 - imgs[13].showH / 2 + yOffset;
-      drawTextImg(13, prevY, 0x68);
+    // 上上句歌词 (槽位 15)：字号微小，0x40 暗调
+    if (imgs[15].show && imgs[15].showW > 0) {
+      int prev2Y = CX - 100 - imgs[15].showH / 2 + yOffset;
+      drawTextImg(15, prev2Y, 0x40);
     }
-    // 当前在唱聚焦行 (槽位 12)：字号最大，0xFF 全白高亮，居中吸睛
+    // 上一句歌词 (槽位 13)：字号中等，0x78 柔灰，形成纵深聚焦对比
+    if (imgs[13].show && imgs[13].showW > 0) {
+      int prevY = CX - 52 - imgs[13].showH / 2 + yOffset;
+      drawTextImg(13, prevY, 0x78);
+    }
+    // 当前在唱聚焦行 (槽位 12)：字号最大，0xFF 全白高亮，居中吸睛；超出屏幕长度时自动跑马灯横向滚动
     int curY = CX - imgs[12].showH / 2 + yOffset;
-    drawTextImg(12, curY, 0xFF);
+    drawTextImgLyricScroll(12, curY, 0xFF, 420);
 
-    // 下一句歌词 (槽位 14)：字号较小，0x68 半透明暗调
+    // 下一句歌词 (槽位 14)：字号中等，0x78 柔灰
     if (imgs[14].show && imgs[14].showW > 0) {
-      int nextY = CX + 72 - imgs[14].showH / 2 + yOffset;
-      drawTextImg(14, nextY, 0x68);
+      int nextY = CX + 52 - imgs[14].showH / 2 + yOffset;
+      drawTextImg(14, nextY, 0x78);
+    }
+    // 下下句歌词 (槽位 16)：字号微小，0x40 暗调
+    if (imgs[16].show && imgs[16].showW > 0) {
+      int next2Y = CX + 100 - imgs[16].showH / 2 + yOffset;
+      drawTextImg(16, next2Y, 0x40);
     }
   } else {
     // 暂无歌词或未加载完成时的优雅微光居中状态
@@ -286,35 +295,7 @@ static void drawLyricsMode() {
     }
   }
 
-  // 3. 底部进度条与时间
-  if (musicHave && musicDuration > 0) {
-    uint32_t curSec = musicPos;
-    if (musicPlaying && linked) {
-      uint32_t elapsed = (millis() - musicPosAt) / 1000;
-      curSec = min(musicDuration, musicPos + elapsed);
-    }
-    const int barW = 240;
-    const int barH = 6;
-    const int barX = CX - barW / 2;
-    const int barY = 385;
-
-    gfx->fillRoundRect(barX, barY, barW, barH, 3, 0x2124);
-    float progress = constrain((float)curSec / (float)musicDuration, 0.0f, 1.0f);
-    int fillW = max(5, (int)(barW * progress));
-    gfx->fillRoundRect(barX, barY, fillW, barH, 3, 0x07FF);
-
-    char timeCur[16], timeTotal[16];
-    formatMusicTime(curSec, timeCur, sizeof(timeCur));
-    formatMusicTime(musicDuration, timeTotal, sizeof(timeTotal));
-    gfx->setTextColor(0x8410);
-    gfx->setTextSize(1);
-    gfx->setCursor(barX, barY + 10);
-    gfx->print(timeCur);
-    gfx->setCursor(barX + barW - 32, barY + 10);
-    gfx->print(timeTotal);
-  }
-
-  // 4. 底部页面指示点
+  // 3. 底部页面指示点
   drawPageDots();
 
   needFlush = true;

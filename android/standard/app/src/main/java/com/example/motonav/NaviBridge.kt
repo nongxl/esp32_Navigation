@@ -144,11 +144,12 @@ object NaviBridge {
     private var lightAt = 0L
     private const val LIGHT_SHOW_M = 300      // 300 米以内才在圆屏上显示
 
-    // ===== 阶段一特性：实时海拔高度与路段坡度 =====
+    // ===== 阶段一特性：实时海拔高度、累计爬升与路段坡度 =====
     private var lastAlt = Double.NaN
     private var lastAltLat = Double.NaN
     private var lastAltLng = Double.NaN
     private var smoothSlope = 0.0
+    private var climbTotalM = 0.0
     private var lastAltMsg = ""
 
     private fun now() = SystemClock.elapsedRealtime()
@@ -668,6 +669,7 @@ object NaviBridge {
                     val distM = res[0]
                     if (distM >= 10.0) {
                         val dAlt = rawAlt - lastAlt
+                        if (dAlt > 0) climbTotalM += dAlt
                         val curSlope = ((dAlt / distM) * 100.0).coerceIn(-35.0, 35.0)
                         smoothSlope = smoothSlope * 0.65 + curSlope * 0.35
                         lastAlt = rawAlt
@@ -681,7 +683,8 @@ object NaviBridge {
                 }
                 val altM = rawAlt.roundToInt()
                 val slpInt = smoothSlope.roundToInt()
-                val altMsg = "#a,$altM,$slpInt"
+                val climbInt = climbTotalM.roundToInt()
+                val altMsg = "#a,$altM,$slpInt,$climbInt"
                 if (altMsg != lastAltMsg) {
                     lastAltMsg = altMsg
                     BleLink.send(altMsg)

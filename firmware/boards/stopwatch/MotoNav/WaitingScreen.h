@@ -4,12 +4,28 @@
 #include "UiModern.h"
 #include "DestHistory.h"
 
-#ifndef U8G2_FONT_SECTION
-#define U8G2_FONT_SECTION(name)
-#endif
-#include "font/u8g2_font_unifont_h_chinese4.h"
-
 // 绘制中文/多语言与 ASCII 混排文本 (基于 u8g2 unifont 汉字字模库)
+static inline int getUTF8Width(const char *s) {
+  if (!s) return 0;
+  int w = 0;
+  while (*s) {
+    if ((uint8_t)*s < 0x80) {
+      w += 8;
+      s++;
+    } else if ((uint8_t)*s < 0xE0) {
+      w += 16;
+      s += 2;
+    } else if ((uint8_t)*s < 0xF0) {
+      w += 16;
+      s += 3;
+    } else {
+      w += 16;
+      s += 4;
+    }
+  }
+  return w;
+}
+
 static inline void drawTextUTF8(int x, int y, const char *str, uint16_t color) {
   if (!str || !str[0]) return;
   #if defined(U8G2_FONT_SUPPORT)
@@ -23,6 +39,11 @@ static inline void drawTextUTF8(int x, int y, const char *str, uint16_t color) {
   #else
   drawAaString((float)x, (float)y, str, 1.6f, 0.9f, 11.0f, color, false);
   #endif
+}
+
+static inline void drawTextUTF8Center(int cx, int y, const char *str, uint16_t color) {
+  int w = getUTF8Width(str);
+  drawTextUTF8(cx - w / 2, y, str, color);
 }
 
 // 全局变量定义
@@ -94,7 +115,11 @@ static void drawDestinationsSheet() {
 
   // 2. 顶部标题栏
   drawRockstarStar(sheetX + 26, sheetY + 28, 9.0f, 4.0f, 0xFDE0, 0xFDE0);
-  drawAaString(sheetX + 105, sheetY + 28, "FAVORITES", 1.8f, 1.0f, 12.0f, C_WHITE, true);
+  if (isChineseLang) {
+    drawTextUTF8(sheetX + 46, sheetY + 34, "常用收藏", C_WHITE);
+  } else {
+    drawAaString(sheetX + 105, sheetY + 28, "FAVORITES", 1.8f, 1.0f, 12.0f, C_WHITE, true);
+  }
 
   // 右上角关闭按钮 (✕)
   drawTranslucentCircle(sheetX + sheetW - 28, sheetY + 28, 14, 0x2124, 160);
@@ -131,8 +156,8 @@ static void drawDestinationsSheet() {
     }
 
     // 地点名称与地址 (支持中文与中英混排)
-    const char *name = destItems[i].name[0] ? destItems[i].name : "Unknown Location";
-    const char *addr = destItems[i].addr[0] ? destItems[i].addr : "Tap to route";
+    const char *name = destItems[i].name[0] ? destItems[i].name : (isChineseLang ? "未知地点" : "Unknown Location");
+    const char *addr = destItems[i].addr[0] ? destItems[i].addr : (isChineseLang ? "轻触立即规划" : "Tap to route");
     drawTextUTF8(itemX + 54, curY + 25, name, C_WHITE);
     drawTextUTF8(itemX + 54, curY + 45, addr, 0x7BEF);
 
@@ -141,7 +166,11 @@ static void drawDestinationsSheet() {
   }
 
   // 底部提示
-  drawAaString(CX, sheetY + sheetH - 18, "SYNCED FAVORITE PLACES", 1.2f, 0.75f, 8.5f, 0x4A69, true);
+  if (isChineseLang) {
+    drawTextUTF8Center(CX, sheetY + sheetH - 12, "已同步手机常用收藏", 0x7BEF);
+  } else {
+    drawAaString(CX, sheetY + sheetH - 18, "SYNCED FAVORITE PLACES", 1.2f, 0.75f, 8.5f, 0x4A69, true);
+  }
 }
 
 // 待机主页面完整重绘

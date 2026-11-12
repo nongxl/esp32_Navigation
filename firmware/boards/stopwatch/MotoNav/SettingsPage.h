@@ -18,7 +18,8 @@ static int brightnessIdx = 2; // 默认 75% (192)
 // 2. 地图主题样式（精简为与 App 严格一致的 4 款核心主题）
 // 1: 罪恶都市(默认), 0: 原版, 5: 极简黑白, 11: 龙珠雷达
 static const int supportedThemes[4] = {1, 0, 5, 11};
-static const char* const supportedThemeLabels[4] = {"VICE CITY", "CLASSIC", "MINIMAL", "DRAGON"};
+static const char* const supportedThemeLabelsEn[4] = {"VICE CITY", "CLASSIC", "MINIMAL", "DRAGON"};
+static const char* const supportedThemeLabelsZh[4] = {"罪恶都市", "经典原版", "极简黑白", "龙珠雷达"};
 extern int themeIdx;
 
 // 3. 屏幕重力旋转随动状态
@@ -28,12 +29,14 @@ static unsigned long lastAutoRotCheck = 0;
 
 // 4. 待机休眠时间 (3分钟, 5分钟, 10分钟, 常亮)
 static const uint32_t sleepTimeouts[] = {180, 300, 600, 0};
-static const char* const sleepLabels[] = {"3 MIN", "5 MIN", "10 MIN", "NEVER"};
+static const char* const sleepLabelsEn[] = {"3 MIN", "5 MIN", "10 MIN", "NEVER"};
+static const char* const sleepLabelsZh[] = {"3分钟", "5分钟", "10分钟", "常亮"};
 static int sleepIdx = 1; // 默认 5 分钟
 
 inline void settingsInit() {
   Preferences pr;
   if (pr.begin("motonav", true)) {
+    isChineseLang = pr.getBool("chinese", true);
     int b = pr.getInt("brightness", 192);
     for (int i = 0; i < 4; i++) {
       if (abs((int)brightnessLevels[i] - b) < 32) { brightnessIdx = i; break; }
@@ -83,9 +86,9 @@ static void drawSettingsIcon(int id, int cx, int cy, uint16_t color = 0xDEFB) {
 // 获取当前选择的 4 款主题名称
 static inline const char* getThemeDisplayLabel() {
   for (int i = 0; i < 4; i++) {
-    if (supportedThemes[i] == themeIdx) return supportedThemeLabels[i];
+    if (supportedThemes[i] == themeIdx) return isChineseLang ? supportedThemeLabelsZh[i] : supportedThemeLabelsEn[i];
   }
-  return "VICE CITY";
+  return isChineseLang ? "罪恶都市" : "VICE CITY";
 }
 
 // 绘制重力感应旋转校准界面（完整保留设置页背景与卡片全貌，实时呈现随动旋转效果，纯白基准十字线呈 90° 相交）
@@ -150,12 +153,20 @@ void drawRotationCalibPage() {
   // 顶部：AUTO ROTATE
   drawTranslucentRoundRect(CX - 72, 44, 144, 28, 14, 0x0000, 200);
   gfx->drawRoundRect(CX - 72, 44, 144, 28, 14, 0x39E7);
-  drawAaString((float)CX, 58.0f, "AUTO ROTATE", 1.4f, 0.85f, 9.5f, C_WHITE, true);
+  if (isChineseLang) {
+    drawTextUTF8Center(CX, 62, "重力随动旋转", C_WHITE);
+  } else {
+    drawAaString((float)CX, 58.0f, "AUTO ROTATE", 1.4f, 0.85f, 9.5f, C_WHITE, true);
+  }
 
   // 底部：TAP ANYWHERE TO LOCK (点击任意位置锁定)
   drawTranslucentRoundRect(CX - 110, 396, 220, 30, 15, 0x0000, 200);
   gfx->drawRoundRect(CX - 110, 396, 220, 30, 15, 0x760D);
-  drawAaString((float)CX, 411.0f, "TAP ANYWHERE TO LOCK", 1.3f, 0.8f, 9.0f, 0x760D, true);
+  if (isChineseLang) {
+    drawTextUTF8Center(CX, 416, "轻触屏幕任意位置锁定", 0x760D);
+  } else {
+    drawAaString((float)CX, 411.0f, "TAP ANYWHERE TO LOCK", 1.3f, 0.8f, 9.0f, 0x760D, true);
+  }
 
   needFlush = true;
 }
@@ -218,7 +229,11 @@ void drawSettingsPage() {
   const int titleY = 36;
   drawTranslucentRoundRect(titleX, titleY, titleW, titleH, 16, 0x0000, 205);
   gfx->drawRoundRect(titleX, titleY, titleW, titleH, 16, 0x2965);
-  drawAaString(CX, titleY + 16, "SETTINGS", 1.8f, 1.0f, 12.0f, C_WHITE, true);
+  if (isChineseLang) {
+    drawTextUTF8Center(CX, titleY + 22, "设置", C_WHITE);
+  } else {
+    drawAaString(CX, titleY + 16, "SETTINGS", 1.8f, 1.0f, 12.0f, C_WHITE, true);
+  }
 
   // 3. 4 个半透明毛玻璃设置卡片 (极简克制高级配色)
   const int cardW = 164;
@@ -237,13 +252,15 @@ void drawSettingsPage() {
   struct CardConfig {
     int x, y;
     int iconId;
-    const char *title;
+    const char *titleZh;
+    const char *titleEn;
     const char *val;
+    bool valIsZh;
   } cards[4] = {
-    {leftX,  topY, 0, "BRIGHTNESS", brightnessLabels[brightnessIdx]},
-    {rightX, topY, 1, "MAP STYLE",  getThemeDisplayLabel()},
-    {leftX,  botY, 2, "ROTATION",   rotBuf},
-    {rightX, botY, 3, "AUTO SLEEP", sleepLabels[sleepIdx]}
+    {leftX,  topY, 0, "屏幕亮度", "BRIGHTNESS", brightnessLabels[brightnessIdx], false},
+    {rightX, topY, 1, "地图风格", "MAP STYLE",  getThemeDisplayLabel(), isChineseLang},
+    {leftX,  botY, 2, "屏幕旋转", "ROTATION",   rotBuf, false},
+    {rightX, botY, 3, "自动休眠", "AUTO SLEEP", isChineseLang ? sleepLabelsZh[sleepIdx] : sleepLabelsEn[sleepIdx], isChineseLang}
   };
 
   for (int i = 0; i < 4; i++) {
@@ -257,8 +274,12 @@ void drawSettingsPage() {
     // 图标 (居中偏上，冷银白)
     drawSettingsIcon(cards[i].iconId, cx + cardW / 2, cy + 26, 0xDEFB);
 
-    // 标题文字 (克制冷灰色，极简抗锯齿字符)
-    drawAaString(cx + cardW / 2, cy + 54, cards[i].title, 1.3f, 0.8f, 9.0f, 0x8C71, true);
+    // 标题文字
+    if (isChineseLang) {
+      drawTextUTF8Center(cx + cardW / 2, cy + 58, cards[i].titleZh, 0x8C71);
+    } else {
+      drawAaString(cx + cardW / 2, cy + 54, cards[i].titleEn, 1.3f, 0.8f, 9.0f, 0x8C71, true);
+    }
 
     // 当前数值底座
     const int valPillW = cardW - 32;
@@ -267,11 +288,20 @@ void drawSettingsPage() {
     const int valPillY = cy + 72;
     drawTranslucentRoundRect(valPillX, valPillY, valPillW, valPillH, 13, 0x0000, 160);
     gfx->drawRoundRect(valPillX, valPillY, valPillW, valPillH, 13, 0x31A6);
-    drawAaString(cx + cardW / 2, valPillY + 13, cards[i].val, 1.5f, 0.9f, 10.0f, C_WHITE, true);
+
+    if (cards[i].valIsZh) {
+      drawTextUTF8Center(cx + cardW / 2, valPillY + 18, cards[i].val, C_WHITE);
+    } else {
+      drawAaString(cx + cardW / 2, valPillY + 13, cards[i].val, 1.5f, 0.9f, 10.0f, C_WHITE, true);
+    }
   }
 
   // 4. 底部极简操作提示
-  drawAaString(CX, 386, "TAP CARD TO CONFIGURE", 1.2f, 0.75f, 8.5f, 0x632C, true);
+  if (isChineseLang) {
+    drawTextUTF8Center(CX, 388, "轻触卡片切换设置", 0x632C);
+  } else {
+    drawAaString(CX, 386, "TAP CARD TO CONFIGURE", 1.2f, 0.75f, 8.5f, 0x632C, true);
+  }
 
   // 5. 底部页面指示点
   drawPageDots();

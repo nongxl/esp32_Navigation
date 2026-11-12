@@ -7,10 +7,12 @@ int themeIdx = 1;                                  // 默认罪恶都市
 bool nightOn = false;                              // 夜间配色
 bool curveOn = false;                              // 弯道急缓上色
 int trailMode = 1;                                 // 走过的路线
+bool isChineseLang = true;                            // 中英文界面自适应 (默认中文，与手机 App 联动)
 
-// ===== 阶段一特性：实时海拔高度与路段坡度仪表 =====
+// ===== 阶段一特性：实时海拔高度、累计爬升与路段坡度仪表 =====
 int altitudeM = 0;
 int slopePct = 0;
+int climbAccumM = 0;
 bool altValid = false;
 
 // ===== 颜色（RGB565）=====
@@ -110,7 +112,7 @@ float mapCamLockH[MCAM_MAX];  // v4.0 放图标时的地图朝向：之后固定
 uint8_t laneBg[8], laneFr[8]; // 每条车道的背景方向码、推荐方向码（0xF = 不推荐）
 
 // ===== 文字图片（手机渲染好的 4 位灰度图）=====
-#define IMG_SLOTS 15           // 0 = 路名，1 = 底部信息，2 = 来电人名字，3/4 = 天气地名和风湿度，5/6 = 音乐歌名和歌手，12 = 当前聚焦歌词，13 = 上一句歌词，14 = 下一句歌词
+#define IMG_SLOTS 18           // 0 = 路名，1 = 底部信息，2 = 来电人名字，3/4 = 天气地名和风湿度，5/6 = 音乐歌名和歌手，12 = 当前聚焦歌词，13/15 = 上句，14/16 = 下句
 #define IMG_MAX   8192        // 每张图最多字节数
 struct TextImg {
   uint8_t *show;              // 正在显示的图

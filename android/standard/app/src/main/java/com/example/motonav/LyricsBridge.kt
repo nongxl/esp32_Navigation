@@ -122,27 +122,37 @@ object LyricsBridge {
 
     private fun dispatchLyrics(curIdx: Int) {
         try {
+            val prev2Text = if (curIdx > 1 && curIdx - 2 < activeCues.size) activeCues[curIdx - 2].text else ""
             val prevText = if (curIdx > 0 && curIdx - 1 < activeCues.size) activeCues[curIdx - 1].text else ""
             val curText = if (curIdx >= 0 && curIdx < activeCues.size) activeCues[curIdx].text else ""
             val nextText = if (curIdx + 1 < activeCues.size) activeCues[curIdx + 1].text else ""
+            val next2Text = if (curIdx + 2 < activeCues.size) activeCues[curIdx + 2].text else ""
 
-            // 槽位 12：当前在唱高亮放大聚焦行 (字号 34f，加粗突出)
-            val curImg = if (curText.isNotBlank()) TextImage.render(curText.take(80), 400, 34f, 22f) else null
+            // 槽位 12：当前在唱高亮放大聚焦行 (字号 38f，不截断，供圆屏跑马灯滚动)
+            val curImg = if (curText.isNotBlank()) TextImage.render(curText.take(120), 750, 38f, 38f) else null
             BleLink.sendImage(12, curImg?.w ?: 0, curImg?.h ?: 0, curImg?.data ?: byteArrayOf())
 
-            // 槽位 13：上一句歌词 (字号 24f，暗淡纵深)
-            val prevImg = if (prevText.isNotBlank()) TextImage.render(prevText.take(80), 340, 24f, 16f) else null
+            // 槽位 13：上一句歌词 (字号 27f，带...缩略)
+            val prevImg = if (prevText.isNotBlank()) TextImage.render(prevText.take(60), 340, 27f, 18f) else null
             BleLink.sendImage(13, prevImg?.w ?: 0, prevImg?.h ?: 0, prevImg?.data ?: byteArrayOf())
 
-            // 槽位 14：下一句歌词 (字号 24f，暗淡纵深)
-            val nextImg = if (nextText.isNotBlank()) TextImage.render(nextText.take(80), 340, 24f, 16f) else null
+            // 槽位 15：上上句歌词 (字号 23f，带...缩略)
+            val prev2Img = if (prev2Text.isNotBlank()) TextImage.render(prev2Text.take(60), 290, 23f, 16f) else null
+            BleLink.sendImage(15, prev2Img?.w ?: 0, prev2Img?.h ?: 0, prev2Img?.data ?: byteArrayOf())
+
+            // 槽位 14：下一句歌词 (字号 27f，带...缩略)
+            val nextImg = if (nextText.isNotBlank()) TextImage.render(nextText.take(60), 340, 27f, 18f) else null
             BleLink.sendImage(14, nextImg?.w ?: 0, nextImg?.h ?: 0, nextImg?.data ?: byteArrayOf())
+
+            // 槽位 16：下下句歌词 (字号 23f，带...缩略)
+            val next2Img = if (next2Text.isNotBlank()) TextImage.render(next2Text.take(60), 290, 23f, 16f) else null
+            BleLink.sendImage(16, next2Img?.w ?: 0, next2Img?.h ?: 0, next2Img?.data ?: byteArrayOf())
         } catch (_: Throwable) {}
     }
 
     private fun dispatchSingleLyric(text: String) {
         try {
-            val curImg = TextImage.render(text.take(80), 400, 34f, 22f)
+            val curImg = TextImage.render(text.take(120), 750, 38f, 38f)
             BleLink.sendImage(12, curImg?.w ?: 0, curImg?.h ?: 0, curImg?.data ?: byteArrayOf())
         } catch (_: Throwable) {}
     }
@@ -152,6 +162,8 @@ object LyricsBridge {
             BleLink.sendImage(12, 0, 0, byteArrayOf())
             BleLink.sendImage(13, 0, 0, byteArrayOf())
             BleLink.sendImage(14, 0, 0, byteArrayOf())
+            BleLink.sendImage(15, 0, 0, byteArrayOf())
+            BleLink.sendImage(16, 0, 0, byteArrayOf())
         } catch (_: Throwable) {}
     }
 
