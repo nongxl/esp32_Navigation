@@ -1332,7 +1332,7 @@ void batPoll() {
   batPct = pct; batChg = chg; usbIn = usb;
   if (mediaHid && changed && pct >= 0 && bleConnected) mediaHid->setBatteryLevel((uint8_t)constrain(pct, 0, 100));
   if (changed) {
-    if (onWaitScreen && page == 0 && !sliding) drawStatus();        // v7.2 只重画状态栏
+    if (onWaitScreen && page == 0 && !sliding) drawWaiting(waitSt); // UI 定制：电量变化重绘主页电量格（不叠加旧状态栏电池）
     else if (inNav) navDirty = true;
   }
   if (changed || now - batSentAt > 60000) {

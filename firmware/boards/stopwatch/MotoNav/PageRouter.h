@@ -270,6 +270,38 @@ void showPageAnimated(int target, int sx, int sy) {
   slideCommit();
 }
 
+// 双键循环切换：原导航 → 半圆时速表 → 倾角/G 值表 → 原导航
+// 前两态在同一页内横向滑动，第三态是真实换页，均复用现有动画，不额外重绘
+void navViewCycle() {
+  if (sliding || callOn || pairOn || fxOn) return;
+
+  if (page == 3) {                                      // 倾角表 → 原导航
+    speedoView = false;
+    showPageAnimated(0, 0, 1);
+    CompanionMode::startVibration(80, 30);
+    return;
+  }
+
+  if (!speedoView) {                                    // 原导航 → 时速表（同页横滑）
+    speedoView = true;
+    dragHoriz = true;
+    dragSign = 1;
+    dragTarget = page;                                  // 仍是 page 0，纯视图切换
+    if (!slidePrepare(page)) {
+      speedoView = false;
+      navDirty = true; needFlush = true;
+      return;
+    }
+    dragging = true;
+    slideAnimate(0, LCD_WIDTH, 220);
+    slideCommit();
+  } else {                                              // 时速表 → 倾角/G 值表（换页）
+    speedoView = false;
+    showPageAnimated(3, 0, -1);
+  }
+  CompanionMode::startVibration(80, 30);
+}
+
 // 音乐页保持显示，取消路口自动切回导航，便于连续切歌与沉浸式歌词浏览
 void musicTick() {
   if (musicAckUntil && (long)(millis() - musicAckUntil) >= 0) {

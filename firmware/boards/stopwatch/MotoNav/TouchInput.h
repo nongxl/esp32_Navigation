@@ -97,10 +97,12 @@ void buttonTick() {
   static unsigned long lastActionAt = 0;
   static unsigned long abBothDownAt = 0;
   static bool abHoldTriggered = false;
+  static bool abHintFired = false;
 
   bool a = digitalRead(BTN_A);
   bool b = digitalRead(BTN_B);
   unsigned long now = millis();
+  if (!a || !b) SS_WAKE();                             // 实体按键唤醒屏保计时
 
   // 1. 到达目的地结算界面：按任意实体键立即退出结算返回主页
   if (fxOn) {
@@ -127,9 +129,15 @@ void buttonTick() {
     aDownAt = 0;
     bDownAt = 0;
 
+    // 新的一次双键按下：重置本次长按标记（长按标记保留到松手，用于区分短/长按）
+    if (abBothDownAt == 0) {
+      abBothDownAt = now;
+      abHoldTriggered = false;
+      abHintFired = false;
+    }
+
     // 伴侣模式专用：双键长按 800ms 返回主页
     if (page == 4) {
-      if (abBothDownAt == 0) abBothDownAt = now;
       if (!abHoldTriggered && now - abBothDownAt >= 800) {
         abHoldTriggered = true;
         CompanionMode::startVibration(180, 70);
@@ -139,28 +147,54 @@ void buttonTick() {
       return;
     }
 
-    // 非伴侣模式：双键切换倾角/G值表 <-> 主页
+    // 双键短按预锁：动作留到松手时执行，避免长按 2 秒期间先误切一次视图
     if (!comboActive && (now - lastActionAt > 350)) {
       comboActive = true;
       lastActionAt = now;
-      if (!sliding && !callOn && !pairOn && !fxOn) {
-        if (page != 3) {
-          showPageAnimated(3, 0, -1);
-        } else {
-          showPageAnimated(0, 0, 1);
+    }
+
+    // 导航/巡航态：双键长按 2 秒退出，无需再摸手机
+    if ((inNav || cruiseOn)) {
+      unsigned long held = now - abBothDownAt;
+      if (!abHintFired && held >= 1000) {              // 1 秒轻震：提示"继续按住将退出"
+        abHintFired = true;
+        CompanionMode::startVibration(60, 25);
+      }
+      if (!abHoldTriggered && held >= 2000) {
+        abHoldTriggered = true;
+        stopArriveFx();
+        resetNavState();                               // 清 inNav/cruiseOn/车速/电子眼等
+        progReset();
+        if (page != 0) page = 0;                       // 若停在倾角页，一并回主页
+        if (txChar) {                                  // 同步通知 App，避免手机端仍显示导航中
+          txChar->setValue((uint8_t *)"T,EXIT_NAV", 10);
+          txChar->notify();
         }
+        drawWaiting(bleConnected ? WAIT_READY : WAIT_NOLINK);
+        CompanionMode::startExitConfirmVibration();    // 退出确认："震-停-震"两段，明确提示已退出
       }
     }
     lastA = a; lastB = b;
     return;
   } else {
-    abBothDownAt = 0;
-    if (a && b) abHoldTriggered = false;
+    abBothDownAt = 0;                                  // 长按标记保留到松手判断后再清
   }
 
-  // 双键均释放时解除双键锁
+  // 双键均释放：短按（本次未按到长按）在此执行，长按已触发则跳过
   if (a && b) {
+    if (comboActive && !abHoldTriggered && !sliding && !callOn && !pairOn && !fxOn) {
+      // 循环切换：原导航 → 时速表 → 倾角/G 值表 → 原导航
+      if ((inNav || cruiseOn || mapModeActive()) && (page == 0 || page == 3)) {
+        navViewCycle();
+      } else if (page != 3) {
+        showPageAnimated(3, 0, -1);                    // 非导航：主页 -> 倾角/G值表
+      } else {
+        showPageAnimated(0, 0, 1);                     // 倾角/G值表 -> 主页
+      }
+    }
     comboActive = false;
+    abHoldTriggered = false;
+    abHintFired = false;
   }
 
   // 若双键尚未完全释放，避免残留单键动作
@@ -277,6 +311,7 @@ void touchPoll() {
     return;
   }
   if (n > 0) {
+    SS_WAKE();                                        // 触摸唤醒屏保计时
     if (!touchDown) {
       touchDown = true;
       touchHoldAt = now;

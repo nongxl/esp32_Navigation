@@ -77,6 +77,12 @@ float navAngle = NAN;         // v1.8 路口实际转弯角度；NAN = 没有，
 unsigned long lastRxMs = 0;   // 最近一次收到任何消息的时间
 bool staleShown = false;      // 是否正在显示“数据中断”提示
 bool navDirty = false;        // 导航画面需要重画
+bool speedoView = false;      // 时速表视图：导航中双键短按切换（false=原导航，true=半圆时速表）
+
+// ===== 30 秒无操作屏保（仅待机主页）=====
+unsigned long screenSaverLastActiveAt = 0;
+bool screenSaverActive = false;
+#define SS_WAKE() do { screenSaverLastActiveAt = millis(); } while (0)
 
 int speedKmh = -1;            // 车速，-1 表示还没有
 int camLimit = 0, camDist = 0;
@@ -190,5 +196,7 @@ void saveMapZoomIfDue() {
 void drawLanesAt(float centerX, float y0, float maxW, float maxH);
 void touchVectorToCanvas(float &dx, float &dy);
 bool mapModeActive();
+void drawSpeedometer();                 // Speedometer.h（半圆时速表）
+void navViewCycle();                    // PageRouter.h（双键循环：导航→时速表→倾角表）
 
 

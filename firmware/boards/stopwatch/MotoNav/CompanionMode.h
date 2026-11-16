@@ -89,6 +89,9 @@ class CompanionMode {
   static bool vibrationReady;
   static uint32_t vibrationStopsAtMs;
   static CompanionRole currentRole;
+  // 退出确认震动序列（震-停-震），与 1 秒轻震提示区分，明确表示"已退出"
+  static uint8_t vibSeqStep;        // 0=空闲 1=等待第二段 2=序列收尾
+  static uint32_t vibSeqNextAt;
 
   // 手势与交互参数
   static constexpr int16_t kGestureDirectionLockPx = 12;
@@ -163,7 +166,22 @@ class CompanionMode {
     vibrationStopsAtMs = millis() + durationMs;
   }
 
+  // 退出巡航确认震动："震-停-震"两段，明确告诉用户已经退出
+  static void startExitConfirmVibration() {
+    if (!vibrationReady) return;
+    vibSeqStep = 1;
+    startVibration(210, 130);                 // 第一段：130ms 较强震动
+    vibSeqNextAt = millis() + 230;            // 停约 100ms 后再来第二段
+  }
+
   static void updateVibration(uint32_t nowMs) {
+    if (vibSeqStep == 1 && static_cast<int32_t>(nowMs - vibSeqNextAt) >= 0) {
+      vibSeqStep = 2;
+      startVibration(210, 240);               // 第二段：240ms 稍长震动（确认感）
+      vibSeqNextAt = nowMs + 320;             // 震动 240ms 后再留 80ms 收尾
+    } else if (vibSeqStep == 2 && static_cast<int32_t>(nowMs - vibSeqNextAt) >= 0) {
+      vibSeqStep = 0;
+    }
     if (vibrationStopsAtMs != 0 && static_cast<int32_t>(nowMs - vibrationStopsAtMs) >= 0) {
       stopVibration();
     }
@@ -480,6 +498,8 @@ AvatarGFXAdapter CompanionMode::adapter;
 bool CompanionMode::initialized = false;
 bool CompanionMode::vibrationReady = false;
 uint32_t CompanionMode::vibrationStopsAtMs = 0;
+uint8_t CompanionMode::vibSeqStep = 0;
+uint32_t CompanionMode::vibSeqNextAt = 0;
 CompanionRole CompanionMode::currentRole = CompanionRole::KK;
 
 CompanionMode::GestureAxis CompanionMode::gestureAxis = CompanionMode::GestureAxis::None;
