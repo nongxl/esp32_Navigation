@@ -311,6 +311,7 @@ bool fastFlushOn = true;          // v2.6 快速刷屏
 
 
 #include "GlobalConfig.h"
+#include "ScreenSaverImage.h"
 
 #include "BleManager.h"
 
@@ -363,6 +364,8 @@ String ringDir = "";
 
 #include "PageNavigation.h"
 
+#include "Speedometer.h"                  // 半圆时速表视图（导航中双键短按切换）
+
 #include "CommandHandler.h"
 
 // v7.0 蓝牙名 = "MotoNav-" + 蓝牙地址最后两个字节
@@ -398,6 +401,7 @@ void setup() {
 
   Wire.begin(IIC_SDA, IIC_SCL);
   StopWatchBoard::init();   // StopWatch：M5IOE1 上电（屏电源/OLED复位/触摸复位），必须先于 touchInit/gfx->begin
+  CompanionMode::setupVibration();  // 开机即初始化震动硬件，保证导航/巡航退出确认震动随时可用
   RtcRX8130::begin();
   RtcRX8130::syncToSystemTime();
   LeanAngleMeter::begin();
@@ -659,7 +663,7 @@ void loop() {
   static bool wasMap = false;
   bool mapNow = inNav && mapModeActive();
   if (mapNow != wasMap) { wasMap = mapNow; navDirty = true; }   // 进出地图模式时整帧重画
-  if (mapNow) navDirty = true;
+  if (mapNow && !speedoView) navDirty = true;          // 时速表视图下不让地图连续重绘抢占
 
   touchPoll();                                         // v5.2 按住接听 / v5.3 滑动换页
   buttonTick();                                        // StopWatch：用户按键换页
@@ -721,6 +725,33 @@ void loop() {
     }
   }
 
+  // ===== 30 秒无操作屏保（仅待机主页）＋ 主页时钟每秒刷新 =====
+  {
+    static unsigned long homeClockAt = 0;
+    const bool ssAllowed = (page == 0 && !inNav && !cruiseOn && !sliding &&
+                            !callOn && !pairOn && !fxOn && !dragging && !touchDown);
+    if (screenSaverActive) {
+      if (!ssAllowed || (millis() - screenSaverLastActiveAt < 30000UL)) {
+        screenSaverActive = false;
+        // 屏保期间收到导航/巡航：立即整帧跳转到导航画面，不先闪一帧主页
+        if (inNav || cruiseOn) {
+          navDirty = true;
+        } else {
+          drawWaiting(conn ? WAIT_READY : WAIT_NOLINK);
+        }
+      }
+    } else if (ssAllowed && millis() - screenSaverLastActiveAt >= 30000UL) {
+      onWaitScreen = false;                            // 别让地图辅助任务再叠加状态栏
+      ScreenSaver::draw();
+      screenSaverActive = true;
+      homeClockAt = millis();
+    } else if (page == 0 && !inNav && !sliding && !callOn && !pairOn && !fxOn &&
+               millis() - homeClockAt >= 1000) {
+      homeClockAt = millis();
+      drawWaiting(waitSt);
+    }
+  }
+
   musicTick();
   settingsTick();                                     // 设置页
   leanTick();                                          // StopWatch：倾角与 G 值仪表页
@@ -773,7 +804,7 @@ void loop() {
   // 待机状态：2 分钟无连接且无操作自动进入伴侣表情模式（电池与接电均适用）
   static unsigned long noConnSince = 0;
   const unsigned long loopNow = millis();
-  if (page != 4 && !inNav && !bleConnected && !sliding && !callOn && !pairOn && !fxOn && !touchDown && !dragging) {
+  if (page != 4 && !inNav && !bleConnected && !sliding && !callOn && !pairOn && !fxOn && !touchDown && !dragging && !screenSaverActive) {
     if (noConnSince == 0) noConnSince = loopNow;
     if (loopNow - noConnSince >= 120000UL) {
       noConnSince = loopNow;

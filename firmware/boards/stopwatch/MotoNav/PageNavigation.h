@@ -96,6 +96,7 @@ void drawTrafficLightLab(uint32_t now) {
 // 按当前全部状态画一整帧导航画面
 void drawNavFrame() {
   onWaitScreen = false;                                 // v3.6 离开首页，猫猫不再动
+  if (speedoView) { drawSpeedometer(); return; }        // 半圆时速表视图（双键短按切换）
   if (mapModeActive()) { drawMapFrame(); return; }      // v2.0 小地图
   viewInit = false;
   if (cruiseOn) {                                       // v4.8 巡航但还没有地图：只显示车速和测速
@@ -155,6 +156,7 @@ void resetNavState() {
   if (idlePowerOffNavigationActive(true, inNav, cruiseOn, navDir == "A"))
     idlePowerOffReset(&idlePowerOffTimer, millis());
   inNav = false;
+  speedoView = false;                                   // 退出导航回到原导航视图
   tripOn = false; lightDist = -1;                       // v3.1
   mapCamN = 0;                                          // v3.5
   ghostN = 0;                                           // v4.4

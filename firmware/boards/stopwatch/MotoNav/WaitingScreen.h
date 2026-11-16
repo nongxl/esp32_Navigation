@@ -3,6 +3,7 @@
 #include <time.h>
 #include "UiModern.h"
 #include "DestHistory.h"
+#include "EnavLogo.h"
 
 // 绘制中文/多语言与 ASCII 混排文本 (基于 u8g2 unifont 汉字字模库)
 static inline int getUTF8Width(const char *s) {
@@ -173,6 +174,98 @@ static void drawDestinationsSheet() {
   }
 }
 
+// ===== 赛博朋克风格时钟主页（参考 IMG_20261113_151246.jpg）=====
+static inline void drawHazardBand(int y, int h) {
+  gfx->fillRect(36, y, 394, h, C_BLACK);
+  for (int x = 28; x < 438; x += 22) {
+    gfx->fillTriangle(x, y + h, x + 11, y + h, x + 22, y, C_ORANGE);
+    gfx->fillTriangle(x, y + h, x + 22, y, x + 11, y, C_ORANGE);
+  }
+}
+
+static inline void drawCyberHome(int st) {
+  extern void drawBattery(int x0, int y0, bool backing = false);
+  gfx->fillScreen(C_BLACK);
+
+  const bool linked = (st == WAIT_READY) || (bleConnected && bleAuthed);
+
+  // 顶部标题：時間（水平居中，避免圆形边缘裁切） | KACL 里程装饰 | 连接状态点
+  drawTextUTF8Center(CX, 96, "時間", C_WHITE);
+  gfx->fillRect(CX - 44, 64, 6, 30, C_RED);
+  drawAaString(122, 76, "KACL", 1.5f, 1.0f, 11.0f, C_WHITE, false);
+  drawAaString(122, 102, "00900", 1.7f, 1.1f, 12.0f, C_WHITE, false);
+  aaDisc(404.0f, 82.0f, 5.0f, linked ? 0x760D : C_GREY);
+
+  // 双警示条纹带
+  drawHazardBand(116, 20);
+  drawAaString(CX, 163, "STANDARD TIME", 1.5f, 1.0f, 10.0f, C_WHITE, true);
+
+  // 时间：时 / 分 / 秒
+  time_t nowSec = time(NULL);
+  struct tm *t = localtime(&nowSec);
+  const int hour = t ? t->tm_hour : 20;
+  const int min  = t ? t->tm_min  : 24;
+  const int sec  = t ? t->tm_sec  : 0;
+  const int mon  = t ? (t->tm_mon + 1) : 11;
+  const int mday = t ? t->tm_mday : 18;
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%02d", hour);
+  drawAaString(96, 222, buf, 4.6f, 2.7f, 28.0f, C_WHITE, true);
+  snprintf(buf, sizeof(buf), "%02d", min);
+  drawAaString(196, 222, buf, 4.6f, 2.7f, 28.0f, C_WHITE, true);
+  snprintf(buf, sizeof(buf), "%02d", sec);
+  drawAaString(296, 222, buf, 4.6f, 2.7f, 28.0f, C_GREY, true);
+  drawAaString(140, 198, "H", 1.5f, 1.0f, 0.0f, C_WHITE, true);
+  drawAaString(240, 198, "M", 1.5f, 1.0f, 0.0f, C_WHITE, true);
+  drawTextUTF8(86, 252, "時", C_WHITE);
+  drawTextUTF8(186, 252, "分", C_WHITE);
+  drawTextUTF8(286, 252, "秒", C_GREY);
+
+  // 日期框（参考图 12/18 样式）
+  gfx->fillRoundRect(350, 190, 78, 34, 6, C_WHITE);
+  char dateBuf[12];
+  snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d", mon, mday);
+  gfx->setTextSize(2);
+  gfx->setTextColor(C_BLACK);
+  int tw = (int)strlen(dateBuf) * 12;
+  gfx->setCursor(350 + (78 - tw) / 2, 199);
+  gfx->print(dateBuf);
+
+  drawHazardBand(272, 20);
+
+  // 下半区左右对半：左半电源/电量（仅主页显示），右半 ENAV logo
+  int pct = batPct > 0 ? constrain(batPct, 0, 100) : 0;
+  int lit = batPct < 0 ? 3 : (pct * 5 + 50) / 100;
+
+  // 闪电符号（左上，放大）
+  gfx->fillTriangle(66, 296, 40, 336, 56, 336, C_RED);
+  gfx->fillTriangle(60, 380, 76, 340, 60, 340, C_RED);
+  gfx->drawLine(62, 332, 54, 348, C_ORANGE);
+  gfx->drawLine(54, 348, 64, 348, C_ORANGE);
+  gfx->drawLine(64, 348, 56, 366, C_ORANGE);
+
+  // 电源红底标签（放大）
+  gfx->fillRect(84, 296, 88, 38, C_RED);
+  drawTextUTF8(92, 318, "電源", C_WHITE);
+  drawAaString(96, 348, "BATTERY", 1.5f, 1.0f, 10.0f, C_WHITE, false);
+
+  // 电量百分比数字：紧贴 "BATTERY" 标签右侧，同一行
+  char pctBuf[8];
+  if (batPct < 0) snprintf(pctBuf, sizeof(pctBuf), "--%%");
+  else snprintf(pctBuf, sizeof(pctBuf), "%d%%", pct);
+  drawAaString(176, 348, pctBuf, 1.9f, 1.2f, 13.0f, C_ORANGE, false);
+
+  // 5 格电量条（放大，占满左半宽度）
+  for (int i = 0; i < 5; i++) {
+    int bx = 84 + i * 26;
+    gfx->drawRect(bx, 368, 20, 16, C_WHITE);
+    if (i < lit) gfx->fillRect(bx + 3, 371, 14, 10, batChg ? C_CYAN : C_ORANGE);
+  }
+
+  // 右半：用户设计的 ENAV logo（红黑撕裂风格位图，已裁掉上下延伸图案只保字体）
+  EnavLogo::draw(242, 300);
+}
+
 // 待机主页面完整重绘
 void drawWaiting(int st) {
   waitSt = st;
@@ -184,67 +277,17 @@ void drawWaiting(int st) {
   if (page == 4) { onWaitScreen = false; return; }
 
   onWaitScreen = true;
+  screenSaverActive = false;
 
-  // 1. 绘制正宗罪恶都市风格地图背景 (暖沙色街区、青绿水面、公园绿地、粉紫路线与车标，半透明暗化)
-  drawThemedMapBackground();
+  // 1. 赛博朋克时钟主页（时间 / 日期 / 电量 / BPM 装饰）
+  drawCyberHome(st);
 
-  // 2. 顶部大号原生电池图标 (彻底恢复 Stopwatch 52x24 经典原版样式，内嵌电量数字，充电带闪电)
-  extern void drawBattery(int x0, int y0, bool backing = false);
-  drawBattery(CX - 28, 20, true);
-
-  // 3. 原生经典连接状态提示 (居中醒目大字号，彻底告别细小微型胶囊)
-  if (st == WAIT_READY || (bleConnected && bleAuthed)) {
-    // 采用与罪恶都市地图一致的高雅柔和绿 0x760D
-    aaDisc((float)(CX - 38), 58.0f, 4.5f, 0x760D);
-    drawAaString(CX + 6, 58, "READY", 1.8f, 1.05f, 11.5f, 0x760D, true);
-  } else if (st == WAIT_NOLINK || !bleConnected) {
-    aaDisc((float)(CX - 42), 58.0f, 4.5f, C_GREY);
-    drawAaString(CX + 6, 58, "NO LINK", 1.8f, 1.05f, 11.5f, C_GREY, true);
-  } else {
-    aaDisc((float)(CX - 48), 58.0f, 4.5f, C_RED);
-    drawAaString(CX + 6, 58, "LINK LOST", 1.8f, 1.05f, 11.5f, C_RED, true);
-  }
-
-  // 4. 获取实时系统时间
-  time_t nowSec = time(NULL);
-  struct tm *t = localtime(&nowSec);
-  int hour = t ? t->tm_hour : 12;
-  int min  = t ? t->tm_min  : 0;
-  int mon  = t ? (t->tm_mon + 1) : 11;
-  int mday = t ? t->tm_mday : 3;
-  int wday = t ? t->tm_wday : 2;
-
-  // 5. 居中大时钟与日期毛玻璃半透明卡片 (136px~226px，高对比度磨砂底座，文字清晰优雅)
-  drawTranslucentRoundRect(CX - 120, 136, 240, 90, 18, 0x0000, 200);
-  gfx->drawRoundRect(CX - 120, 136, 240, 90, 18, 0x39E7);
-
-  char clockBuf[12];
-  snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d", hour, min);
-  drawAaString(CX, 168, clockBuf, 4.0f, 2.3f, 30.0f, C_WHITE, true);
-
-  char dateBuf[24];
-  snprintf(dateBuf, sizeof(dateBuf), "%s %02d  %s", getMonthStr(mon), mday, getWdayStr(wday));
-  drawAaString(CX, 206, dateBuf, 1.8f, 1.05f, 12.0f, 0xAFBD, true);
-
-  // 6. 经典 Rockstar (R星) 风格五角星按钮 (CX=233, Y=316)
-  const int btnCY = 316;
-  // 半透明磨砂纯黑底座 (毛玻璃质感，边缘柔和微光)
-  drawTranslucentCircle(CX, btnCY, 32, 0x0000, 180);
-  gfx->drawCircle(CX, btnCY, 32, 0x4A69);
-  gfx->drawCircle(CX, btnCY, 33, 0x2124);
-
-  // R星五角星：纯白实心填充，硬朗金黄轮廓描边
-  drawRockstarStar(CX, btnCY, 18.0f, 7.5f, C_WHITE, 0xFDE0);
-
-  // 按钮下方文字标签
-  drawAaString(CX, btnCY + 44, "FAVORITES", 1.4f, 0.85f, 9.5f, 0x7BEF, true);
-
-  // 7. 如果用户点击打开了目的地抽屉浮层，则覆盖绘制
+  // 2. 如果用户点击打开了目的地抽屉浮层，则覆盖绘制
   if (destSheetOpen) {
     drawDestinationsSheet();
   }
 
-  // 8. 底部页面指示点
+  // 3. 底部页面指示点
   drawPageDots();
   needFlush = true;
 }
