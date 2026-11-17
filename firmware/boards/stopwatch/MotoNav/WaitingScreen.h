@@ -195,15 +195,24 @@ static inline void drawCyberHome(int st) {
   // 1. 外圈圆环（4px 粗，中性灰）
   for (int dr = 0; dr < 5; dr++) gfx->drawCircle(CX, CX, 196 + dr, HOME_RING);
 
-  // 2. 顶部一行：电池图标 + 电量百分比 + 收藏五角星
+  // 2. 顶部一行：电池图标（框内按电量填充）+ 电量百分比 + 收藏五角星
   int pct = batPct > 0 ? constrain(batPct, 0, 100) : 0;
   gfx->drawRoundRect(HOME_BAT_X, HOME_BAT_Y, 60, 38, 8, HOME_SUB);
   gfx->fillRoundRect(HOME_BAT_X + 60, HOME_BAT_Y + 12, 8, 14, 2, HOME_SUB);
-  // 充电闪电（参考图样式：居中双段折线）
-  {
+  // 电量填充：电池框内按百分比从左往右填灰条（无电量数据时留空）
+  if (batPct >= 0 && pct > 0) {
+    const int pad = 4, iw = 60 - 2 * pad, ih = 38 - 2 * pad;
+    int fillW = (int)lroundf((float)iw * pct / 100.0f);
+    if (fillW < 1) fillW = 1;
+    if (fillW > iw) fillW = iw;
+    int rad = fillW < 8 ? fillW / 2 : 4;
+    gfx->fillRoundRect(HOME_BAT_X + pad, HOME_BAT_Y + pad, fillW, ih, rad, HOME_SUB);
+  }
+  // 充电闪电：仅插入充电线（usbIn）时显示，用亮一档的灰在填充/黑底上都清晰
+  if (usbIn) {
     int fx = HOME_BAT_X + 30, fy = HOME_STAR_Y;
-    gfx->fillTriangle(fx + 5, fy - 14, fx - 7, fy + 2, fx + 1, fy + 2, HOME_SUB);
-    gfx->fillTriangle(fx + 1, fy + 2, fx - 4, fy + 14, fx + 8, fy - 4, HOME_SUB);
+    gfx->fillTriangle(fx + 5, fy - 14, fx - 7, fy + 2, fx + 1, fy + 2, HOME_TXT);
+    gfx->fillTriangle(fx + 1, fy + 2, fx - 4, fy + 14, fx + 8, fy - 4, HOME_TXT);
   }
   char pctBuf[8];
   if (batPct < 0) snprintf(pctBuf, sizeof(pctBuf), "--%%");

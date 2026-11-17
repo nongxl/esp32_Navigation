@@ -294,7 +294,7 @@ def star(d,cx,cy,R,rin,col):
         pts.append((cx+rr*np.cos(a), cy+rr*np.sin(a)))
     d.polygon(pts,fill=col)
 
-def render(hhmm="20:07", date="11-17", wd="TUE", out="/tmp/home_preview.png"):
+def render(hhmm="20:07", date="11-17", wd="TUE", out="/tmp/home_preview.png", pct=85, charging=False):
     im=Image.new("RGB",(W,H),BG); d=ImageDraw.Draw(im)
 
     for r in range(196,201):
@@ -305,12 +305,17 @@ def render(hhmm="20:07", date="11-17", wd="TUE", out="/tmp/home_preview.png"):
     bx,by,bw,bh = 104,110,60,38
     d.rounded_rectangle([bx,by,bx+bw,by+bh],radius=8,outline=SUB,width=3)
     d.rounded_rectangle([bx+bw,by+bh//2-7,bx+bw+8,by+bh//2+7],radius=2,fill=SUB)
-    fx,fy=bx+bw//2,TY
-    d.polygon([(fx+5,fy-14),(fx-7,fy+2),(fx+1,fy+2),(fx-4,fy+14),(fx+8,fy-4),(fx+1,fy-4)],fill=SUB)
+    pad=4; iw=bw-2*pad; ih=bh-2*pad
+    fw=max(1,min(iw,round(iw*max(0,min(100,pct))/100)))
+    if pct>0:
+        d.rounded_rectangle([bx+pad,by+pad,bx+pad+fw,by+pad+ih],radius=min(4,fw//2),fill=SUB)
+    if charging:
+        fx,fy=bx+bw//2,TY
+        d.polygon([(fx+5,fy-14),(fx-7,fy+2),(fx+1,fy+2),(fx-4,fy+14),(fx+8,fy-4),(fx+1,fy-4)],fill=TXT)
 
-    pct="100%"; pcw,pch,pgap = 4.6,4.9,5
-    pw=text_w(pct,pcw,pch,pgap,fw=2)
-    draw_text(d, 256-pw//2, TY-pch*7//2, pct, pcw,pch,pgap, SUB, BG, fw=2)
+    pct_txt=f"{pct}%"; pcw,pch,pgap = 4.6,4.9,5
+    pw=text_w(pct_txt,pcw,pch,pgap,fw=2)
+    draw_text(d, 256-pw//2, TY-pch*7//2, pct_txt, pcw,pch,pgap, SUB, BG, fw=2)
     star(d, 335, TY, 18, 7.5, SUB)
 
     d.rectangle([83,160,383,163], fill=LINE)
