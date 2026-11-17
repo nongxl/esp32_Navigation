@@ -1,0 +1,12 @@
+{
+  "name": "SensorLib",
+  "version": "0.5.0",
+  "build": {
+    "srcFilter": [
+      "+<*.cpp>",
+      "+<platform/*.cpp>",
+      "+<touch/TouchPoints.cpp>",
+      "+<touch/TouchDrvCST*.cpp>"
+    ]
+  }
+}
