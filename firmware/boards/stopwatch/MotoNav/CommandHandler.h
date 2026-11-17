@@ -510,6 +510,8 @@ void handleText(const String &m) {
       if (page != 0) page = 0;
       arrivedBannerOn = true;
       arrivedBannerAt = millis();
+      speedKmh = -1;                       // 到达停车：时速表立即归零（-1 显示为 0）
+      navDirty = true;                     // 强制重绘，时速表视图同步归零
     }
     if (prevDir == "A" && navDir != "A") progReset();       // v7.3 到达后又开始新的导航：进度从头算
     else if (navDir != "A" && fxOn) {

@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <time.h>
 #include "UiModern.h"
+#include "HomeFace.h"
 #include "DestHistory.h"
 #include "EnavLogo.h"
 
@@ -46,6 +47,10 @@ static inline void drawTextUTF8Center(int cx, int y, const char *str, uint16_t c
   int w = getUTF8Width(str);
   drawTextUTF8(cx - w / 2, y, str, color);
 }
+
+// 说明：旧的 drawTextUTF8Scaled（44x24 离屏缓冲 + setFramebuffer）已删除。
+// 它按画布宽度 466 计算行跨度写入仅 44 宽的小缓冲，造成大规模越界写，
+// 是切换视图时黑屏死机的元凶。新主页为纯数字/英文，不再需要中文放大。
 
 // 全局变量定义
 DestItem destItems[MAX_DEST_ITEMS];
@@ -174,96 +179,78 @@ static void drawDestinationsSheet() {
   }
 }
 
-// ===== 赛博朋克风格时钟主页（参考 IMG_20261113_151246.jpg）=====
-static inline void drawHazardBand(int y, int h) {
-  gfx->fillRect(36, y, 394, h, C_BLACK);
-  for (int x = 28; x < 438; x += 22) {
-    gfx->fillTriangle(x, y + h, x + 11, y + h, x + 22, y, C_ORANGE);
-    gfx->fillTriangle(x, y + h, x + 22, y, x + 11, y, C_ORANGE);
-  }
-}
+// ===== 极简暗色圆形时钟主页（参考 f047366e44ec7bdd54cd06d0c6c26e35.jpg）=====
+// 顶部：电池图标 + 电量百分比 + 收藏五角星（星标在百分比右侧，点击区见 waitingScreenTap）
+// 中部：大号 HH:MM，上下分隔线；底部：MM-DD 与英文星期
+// 布局严格上下对称：大号时间块居中于圆心，顶行/底行分列上下分隔线两侧。
+#define HOME_BAT_X   104
+#define HOME_BAT_Y   110
+#define HOME_STAR_X  335
+#define HOME_STAR_Y  129
 
 static inline void drawCyberHome(int st) {
-  extern void drawBattery(int x0, int y0, bool backing = false);
-  gfx->fillScreen(C_BLACK);
+  (void)st;
+  gfx->fillScreen(HOME_BG);
 
-  const bool linked = (st == WAIT_READY) || (bleConnected && bleAuthed);
+  // 1. 外圈圆环（4px 粗，中性灰）
+  for (int dr = 0; dr < 5; dr++) gfx->drawCircle(CX, CX, 196 + dr, HOME_RING);
 
-  // 顶部标题：時間（水平居中，避免圆形边缘裁切） | KACL 里程装饰 | 连接状态点
-  drawTextUTF8Center(CX, 96, "時間", C_WHITE);
-  gfx->fillRect(CX - 44, 64, 6, 30, C_RED);
-  drawAaString(122, 76, "KACL", 1.5f, 1.0f, 11.0f, C_WHITE, false);
-  drawAaString(122, 102, "00900", 1.7f, 1.1f, 12.0f, C_WHITE, false);
-  aaDisc(404.0f, 82.0f, 5.0f, linked ? 0x760D : C_GREY);
-
-  // 双警示条纹带
-  drawHazardBand(116, 20);
-  drawAaString(CX, 163, "STANDARD TIME", 1.5f, 1.0f, 10.0f, C_WHITE, true);
-
-  // 时间：时 / 分 / 秒
-  time_t nowSec = time(NULL);
-  struct tm *t = localtime(&nowSec);
-  const int hour = t ? t->tm_hour : 20;
-  const int min  = t ? t->tm_min  : 24;
-  const int sec  = t ? t->tm_sec  : 0;
-  const int mon  = t ? (t->tm_mon + 1) : 11;
-  const int mday = t ? t->tm_mday : 18;
-  char buf[8];
-  snprintf(buf, sizeof(buf), "%02d", hour);
-  drawAaString(96, 222, buf, 4.6f, 2.7f, 28.0f, C_WHITE, true);
-  snprintf(buf, sizeof(buf), "%02d", min);
-  drawAaString(196, 222, buf, 4.6f, 2.7f, 28.0f, C_WHITE, true);
-  snprintf(buf, sizeof(buf), "%02d", sec);
-  drawAaString(296, 222, buf, 4.6f, 2.7f, 28.0f, C_GREY, true);
-  drawAaString(140, 198, "H", 1.5f, 1.0f, 0.0f, C_WHITE, true);
-  drawAaString(240, 198, "M", 1.5f, 1.0f, 0.0f, C_WHITE, true);
-  drawTextUTF8(86, 252, "時", C_WHITE);
-  drawTextUTF8(186, 252, "分", C_WHITE);
-  drawTextUTF8(286, 252, "秒", C_GREY);
-
-  // 日期框（参考图 12/18 样式）
-  gfx->fillRoundRect(350, 190, 78, 34, 6, C_WHITE);
-  char dateBuf[12];
-  snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d", mon, mday);
-  gfx->setTextSize(2);
-  gfx->setTextColor(C_BLACK);
-  int tw = (int)strlen(dateBuf) * 12;
-  gfx->setCursor(350 + (78 - tw) / 2, 199);
-  gfx->print(dateBuf);
-
-  drawHazardBand(272, 20);
-
-  // 下半区左右对半：左半电源/电量（仅主页显示），右半 ENAV logo
+  // 2. 顶部一行：电池图标 + 电量百分比 + 收藏五角星
   int pct = batPct > 0 ? constrain(batPct, 0, 100) : 0;
-  int lit = batPct < 0 ? 3 : (pct * 5 + 50) / 100;
-
-  // 闪电符号（左上，放大）
-  gfx->fillTriangle(66, 296, 40, 336, 56, 336, C_RED);
-  gfx->fillTriangle(60, 380, 76, 340, 60, 340, C_RED);
-  gfx->drawLine(62, 332, 54, 348, C_ORANGE);
-  gfx->drawLine(54, 348, 64, 348, C_ORANGE);
-  gfx->drawLine(64, 348, 56, 366, C_ORANGE);
-
-  // 电源红底标签（放大）
-  gfx->fillRect(84, 296, 88, 38, C_RED);
-  drawTextUTF8(92, 318, "電源", C_WHITE);
-  drawAaString(96, 348, "BATTERY", 1.5f, 1.0f, 10.0f, C_WHITE, false);
-
-  // 电量百分比数字：紧贴 "BATTERY" 标签右侧，同一行
+  gfx->drawRoundRect(HOME_BAT_X, HOME_BAT_Y, 60, 38, 8, HOME_SUB);
+  gfx->fillRoundRect(HOME_BAT_X + 60, HOME_BAT_Y + 12, 8, 14, 2, HOME_SUB);
+  // 充电闪电（参考图样式：居中双段折线）
+  {
+    int fx = HOME_BAT_X + 30, fy = HOME_STAR_Y;
+    gfx->fillTriangle(fx + 5, fy - 14, fx - 7, fy + 2, fx + 1, fy + 2, HOME_SUB);
+    gfx->fillTriangle(fx + 1, fy + 2, fx - 4, fy + 14, fx + 8, fy - 4, HOME_SUB);
+  }
   char pctBuf[8];
   if (batPct < 0) snprintf(pctBuf, sizeof(pctBuf), "--%%");
   else snprintf(pctBuf, sizeof(pctBuf), "%d%%", pct);
-  drawAaString(176, 348, pctBuf, 1.9f, 1.2f, 13.0f, C_ORANGE, false);
+  {
+    const float PCW = 4.6f, PCH = 4.9f, PGAP = 5.0f, PFW = 2.0f;
+    float pw = homeTextWidth(pctBuf, PCW, PCH, PGAP, PFW);
+    homeDrawText(256.0f - pw / 2.0f, HOME_STAR_Y - PCH * 7.0f / 2.0f, pctBuf,
+                 PCW, PCH, PGAP, PFW, HOME_SUB, HOME_BG);
+  }
+  drawRockstarStar(HOME_STAR_X, HOME_STAR_Y, 18.0f, 7.5f, HOME_SUB, HOME_SUB);
 
-  // 5 格电量条（放大，占满左半宽度）
-  for (int i = 0; i < 5; i++) {
-    int bx = 84 + i * 26;
-    gfx->drawRect(bx, 368, 20, 16, C_WHITE);
-    if (i < lit) gfx->fillRect(bx + 3, 371, 14, 10, batChg ? C_CYAN : C_ORANGE);
+  // 3. 上分隔线
+  gfx->fillRect(83, 160, 301, 4, HOME_LINE);
+
+  // 4. 大号 HH:MM（严格居中于圆心，参考图 y 183 起）
+  time_t nowSec = time(NULL);
+  struct tm *tmv = localtime(&nowSec);
+  int hour = tmv ? tmv->tm_hour : 20;
+  int min  = tmv ? tmv->tm_min  : 8;
+  int mon  = tmv ? (tmv->tm_mon + 1) : 11;
+  int mday = tmv ? tmv->tm_mday : 18;
+  int wday = tmv ? tmv->tm_wday : 5;
+  char clockBuf[12];
+  snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d", hour, min);
+  {
+    const float CW = 11.0f, CH = 14.4f, GAP = 12.0f, FW = 5.0f;
+    float tw = homeTextWidth(clockBuf, CW, CH, GAP, FW);
+    homeDrawText(CX - tw / 2.0f, 183.0f, clockBuf, CW, CH, GAP, FW, HOME_TXT, HOME_BG);
   }
 
-  // 右半：用户设计的 ENAV logo（红黑撕裂风格位图，已裁掉上下延伸图案只保字体）
-  EnavLogo::draw(242, 300);
+  // 5. 下分隔线
+  gfx->fillRect(83, 303, 301, 4, HOME_LINE);
+
+  // 6. 日期 + 星期（贴近下分隔线，日期与星期间距收小）
+  char dateBuf[8];
+  snprintf(dateBuf, sizeof(dateBuf), "%02d-%02d", mon, mday);
+  {
+    const float DW = 4.4f, DH = 5.4f, DGAP = 8.0f, DFW = 2.0f;
+    const float WW = 4.0f, WH = 5.0f, WGAP = 7.0f, WFW = 2.0f;
+    const float GX = 32.0f;
+    float dw = homeTextWidth(dateBuf, DW, DH, DGAP, DFW);
+    float ww = homeTextWidth(getWdayStr(wday), WW, WH, WGAP, WFW);
+    float x0 = CX - (dw + GX + ww) / 2.0f;
+    homeDrawText(x0, 318.0f, dateBuf, DW, DH, DGAP, DFW, HOME_SUB, HOME_BG);
+    homeDrawText(x0 + dw + GX, 318.0f, getWdayStr(wday), WW, WH, WGAP, WFW, HOME_SUB, HOME_BG);
+  }
 }
 
 // 待机主页面完整重绘
@@ -277,7 +264,6 @@ void drawWaiting(int st) {
   if (page == 4) { onWaitScreen = false; return; }
 
   onWaitScreen = true;
-  screenSaverActive = false;
 
   // 1. 赛博朋克时钟主页（时间 / 日期 / 电量 / BPM 装饰）
   drawCyberHome(st);
@@ -332,10 +318,10 @@ inline bool waitingScreenTap(int x, int y) {
     return true;
   }
 
-  // 未展开浮层时：检查是否点击了 R星五角星按钮 (CX=233, btnCY=322, 半径 38)
-  int dx = x - CX;
-  int dy = y - 322;
-  if (dx * dx + dy * dy <= 38 * 38) {
+  // 未展开浮层时：检查右上角的收藏五角星按钮 (HOME_STAR_X/Y, 半径 40)
+  int dx = x - HOME_STAR_X;
+  int dy = y - HOME_STAR_Y;
+  if (dx * dx + dy * dy <= 40 * 40) {
     CompanionMode::startVibration(50, 20);
     destSheetOpen = true;
     // 向手机请求最新的常用地点和历史

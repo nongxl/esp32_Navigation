@@ -102,7 +102,6 @@ void buttonTick() {
   bool a = digitalRead(BTN_A);
   bool b = digitalRead(BTN_B);
   unsigned long now = millis();
-  if (!a || !b) SS_WAKE();                             // 实体按键唤醒屏保计时
 
   // 1. 到达目的地结算界面：按任意实体键立即退出结算返回主页
   if (fxOn) {
@@ -311,7 +310,6 @@ void touchPoll() {
     return;
   }
   if (n > 0) {
-    SS_WAKE();                                        // 触摸唤醒屏保计时
     if (!touchDown) {
       touchDown = true;
       touchHoldAt = now;

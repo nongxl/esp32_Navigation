@@ -146,6 +146,13 @@ static void spoSegChar(int x, int y, int w, int h, int t, char c, uint16_t col) 
     case '8': A = B = C = D = E = F = G = true; break;
     case '9': A = B = C = D = F = G = true; break;
     case '-': G = true; break;
+    // 七段字母（巡航 CRUISE 用）：R = 完整 P(A/B/E/F/G) + 斜腿
+    case 'C': A = D = E = F = true; break;
+    case 'R': A = B = E = F = G = true; break;
+    case 'U': B = C = D = E = F = true; break;
+    case 'I': B = C = true; break;
+    case 'S': A = F = G = C = D = true; break;
+    case 'E': A = F = G = E = D = true; break;
     default: return;
   }
   int half = h / 2;
@@ -158,6 +165,11 @@ static void spoSegChar(int x, int y, int w, int h, int t, char c, uint16_t col) 
   if (B) gfx->fillRoundRect(x + w - t, y + t / 2, t, ht, r, col);
   if (E) gfx->fillRoundRect(x, y + half, t, ht, r, col);
   if (C) gfx->fillRoundRect(x + w - t, y + half, t, ht, r, col);
+  if (c == 'R') {
+    bool rec = recIcon; recIcon = false;
+    thickLine(x + w / 2.0f, y + half, x + w - t / 2.0f, y + h - t / 2.0f, (float)t, col);  // R 的斜腿：从中横中部斜向右下
+    recIcon = rec;
+  }
 }
 
 // 右对齐绘制距离数字：右边界固定，单位另画在固定位置，数字位数变化时不会推动单位
@@ -187,6 +199,63 @@ static void spoDrawSegNumber(const String &num, int rightX, int cy, uint16_t col
       continue;
     }
     spoSegChar(x, y, w, h, t, ch, col);
+    x += w + gap;
+  }
+}
+
+// ---------- 巡航 CRUISE 专用：斜切尖头六边形数码管笔画（参考 CRUISE 字模图）----------
+// 水平段 / 垂直段都是两端 45° 斜切的六边形，比圆角矩形更接近电子管字样
+static void spoBevelBarH(float x, float y, float w, float t, uint16_t col) {
+  float c = t * 0.5f;
+  float px[6] = {x + c, x + w - c, x + w, x + w - c, x + c, x};
+  float py[6] = {y, y, y + t / 2, y + t, y + t, y + t / 2};
+  float mx = x + w / 2, my = y + t / 2;
+  for (int i = 0; i < 6; i++) { int j = (i + 1) % 6; gfx->fillTriangle(mx, my, px[i], py[i], px[j], py[j], col); }
+}
+static void spoBevelBarV(float x, float y, float t, float h, uint16_t col) {
+  float c = t * 0.5f;
+  float px[6] = {x + t / 2, x + t, x + t, x + t / 2, x, x};
+  float py[6] = {y, y + c, y + h - c, y + h, y + h - c, y + c};
+  float mx = x + t / 2, my = y + h / 2;
+  for (int i = 0; i < 6; i++) { int j = (i + 1) % 6; gfx->fillTriangle(mx, my, px[i], py[i], px[j], py[j], col); }
+}
+// 斜切风格单字符；R 的斜腿用粗线（临时脱离图元记录模式，避免被记录而不显示）
+static void spoBevelChar(int x, int y, int w, int h, int t, char c, uint16_t col) {
+  bool A=false,B=false,C=false,D=false,E=false,F=false,G=false;
+  switch (c) {
+    case 'C': A = D = E = F = true; break;
+    case 'R': A = B = E = F = G = true; break;   // 完整 P + 斜腿
+    case 'U': B = C = D = E = F = true; break;
+    case 'I': B = C = true; break;
+    case 'S': A = F = G = C = D = true; break;
+    case 'E': A = F = G = E = D = true; break;
+    default: return;
+  }
+  int half = h / 2, ht = half - t / 2;
+  if (A) spoBevelBarH((float)(x + t / 2), (float)y, (float)(w - t), (float)t, col);
+  if (G) spoBevelBarH((float)(x + t / 2), (float)(y + half - t / 2), (float)(w - t), (float)t, col);
+  if (D) spoBevelBarH((float)(x + t / 2), (float)(y + h - t), (float)(w - t), (float)t, col);
+  if (F) spoBevelBarV((float)x, (float)(y + t / 2), (float)t, (float)ht, col);
+  if (B) spoBevelBarV((float)(x + w - t), (float)(y + t / 2), (float)t, (float)ht, col);
+  if (E) spoBevelBarV((float)x, (float)(y + half), (float)t, (float)ht, col);
+  if (C) spoBevelBarV((float)(x + w - t), (float)(y + half), (float)t, (float)ht, col);
+  if (c == 'R') {
+    bool rec = recIcon; recIcon = false;
+    thickLine(x + w / 2.0f, y + half, x + w - t / 2.0f, y + h - t / 2.0f, (float)t, col);  // 斜腿从中横中部斜向右下
+    recIcon = rec;
+  }
+}
+
+// 居中绘制数码管文本（巡航 CRUISE 用，整体水平/垂直居中）
+static void spoDrawSegText(const char *s, int cx, int cy, uint16_t col) {
+  int n = (int)strlen(s);
+  if (n == 0) return;
+  const int w = 24, h = 34, t = 5, gap = 6;
+  int total = n * w + (n - 1) * gap;
+  int x = cx - total / 2;
+  int y = cy - h / 2;
+  for (int i = 0; i < n; i++) {
+    spoBevelChar(x, y, w, h, t, s[i], col);
     x += w + gap;
   }
 }
@@ -266,23 +335,28 @@ void drawSpeedometer() {
   spoDrawBigSegNumber(String(shown), (int)CXF, 210, over ? C_RED : C_WHITE);
   printCentered("km/h", (int)CXF, 268, 2, over ? 0xFC10 : 0xAD75);
 
-  // ---- 底部白色圆角框：加粗矢量箭头 + 仿电子管距离 + 固定单位 ----
+  // ---- 底部白色圆角框 ----
   const int bw = 210, bh = 54, bx = (int)CXF - bw / 2, by = 356;
   gfx->fillRoundRect(bx, by, bw, bh, 12, C_WHITE);
 
-  spoDrawArrow(bx + 30, by + bh / 2, 21, navDir);        // 箭头整体收在框内，含抗锯齿余量
+  if (cruiseOn) {
+    // 巡航模式：无箭头无距离，用电子管字体显示 CRUISE
+    spoDrawSegText("CRUISE", (int)CXF, by + bh / 2, C_BLACK);
+  } else {
+    spoDrawArrow(bx + 30, by + bh / 2, 21, navDir);      // 箭头整体收在框内，含抗锯齿余量
 
-  String dv = distText(navDist);
-  String num = dv, unit = "m";
-  if (navDist < 0) { num = "--"; unit = "m"; }
-  else if (dv.endsWith("km")) { num = dv.substring(0, dv.length() - 2); unit = "km"; }
-  else if (dv.endsWith("m"))  { num = dv.substring(0, dv.length() - 1); unit = "m"; }
+    String dv = distText(navDist);
+    String num = dv, unit = "m";
+    if (navDist < 0) { num = "--"; unit = "m"; }
+    else if (dv.endsWith("km")) { num = dv.substring(0, dv.length() - 2); unit = "km"; }
+    else if (dv.endsWith("m"))  { num = dv.substring(0, dv.length() - 1); unit = "m"; }
 
-  spoDrawSegNumber(num, bx + 172, by + bh / 2, C_BLACK);  // 右边界固定 → 位数变化不左右跳
-  gfx->setTextSize(2);
-  gfx->setTextColor(C_BLACK);
-  gfx->setCursor(bx + 178, by + bh / 2 + 6);              // 单位位置固定，不随数字摇摆
-  gfx->print(unit);
+    spoDrawSegNumber(num, bx + 172, by + bh / 2, C_BLACK);  // 右边界固定 → 位数变化不左右跳
+    gfx->setTextSize(2);
+    gfx->setTextColor(C_BLACK);
+    gfx->setCursor(bx + 178, by + bh / 2 + 6);              // 单位位置固定，不随数字摇摆
+    gfx->print(unit);
+  }
 
   // ---- 超速拍照 / 边缘告警沿用原逻辑 ----
   uint32_t t = millis();

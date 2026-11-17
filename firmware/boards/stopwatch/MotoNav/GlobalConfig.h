@@ -79,10 +79,7 @@ bool staleShown = false;      // 是否正在显示“数据中断”提示
 bool navDirty = false;        // 导航画面需要重画
 bool speedoView = false;      // 时速表视图：导航中双键短按切换（false=原导航，true=半圆时速表）
 
-// ===== 30 秒无操作屏保（仅待机主页）=====
-unsigned long screenSaverLastActiveAt = 0;
-bool screenSaverActive = false;
-#define SS_WAKE() do { screenSaverLastActiveAt = millis(); } while (0)
+// ===== 屏保功能已移除（2026-11-17）=====
 
 int speedKmh = -1;            // 车速，-1 表示还没有
 int camLimit = 0, camDist = 0;

@@ -311,7 +311,7 @@ bool fastFlushOn = true;          // v2.6 快速刷屏
 
 
 #include "GlobalConfig.h"
-#include "ScreenSaverImage.h"
+// 屏保功能已移除（ScreenSaverImage.h 不再参与编译）
 
 #include "BleManager.h"
 
@@ -725,28 +725,11 @@ void loop() {
     }
   }
 
-  // ===== 30 秒无操作屏保（仅待机主页）＋ 主页时钟每秒刷新 =====
+  // ===== 主页时钟每秒刷新（屏保功能已移除）=====
   {
     static unsigned long homeClockAt = 0;
-    const bool ssAllowed = (page == 0 && !inNav && !cruiseOn && !sliding &&
-                            !callOn && !pairOn && !fxOn && !dragging && !touchDown);
-    if (screenSaverActive) {
-      if (!ssAllowed || (millis() - screenSaverLastActiveAt < 30000UL)) {
-        screenSaverActive = false;
-        // 屏保期间收到导航/巡航：立即整帧跳转到导航画面，不先闪一帧主页
-        if (inNav || cruiseOn) {
-          navDirty = true;
-        } else {
-          drawWaiting(conn ? WAIT_READY : WAIT_NOLINK);
-        }
-      }
-    } else if (ssAllowed && millis() - screenSaverLastActiveAt >= 30000UL) {
-      onWaitScreen = false;                            // 别让地图辅助任务再叠加状态栏
-      ScreenSaver::draw();
-      screenSaverActive = true;
-      homeClockAt = millis();
-    } else if (page == 0 && !inNav && !sliding && !callOn && !pairOn && !fxOn &&
-               millis() - homeClockAt >= 1000) {
+    if (page == 0 && !inNav && !sliding && !callOn && !pairOn && !fxOn &&
+        millis() - homeClockAt >= 1000) {
       homeClockAt = millis();
       drawWaiting(waitSt);
     }
@@ -804,7 +787,7 @@ void loop() {
   // 待机状态：2 分钟无连接且无操作自动进入伴侣表情模式（电池与接电均适用）
   static unsigned long noConnSince = 0;
   const unsigned long loopNow = millis();
-  if (page != 4 && !inNav && !bleConnected && !sliding && !callOn && !pairOn && !fxOn && !touchDown && !dragging && !screenSaverActive) {
+  if (page != 4 && !inNav && !bleConnected && !sliding && !callOn && !pairOn && !fxOn && !touchDown && !dragging) {
     if (noConnSince == 0) noConnSince = loopNow;
     if (loopNow - noConnSince >= 120000UL) {
       noConnSince = loopNow;
