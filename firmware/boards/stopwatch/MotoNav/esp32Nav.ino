@@ -410,7 +410,7 @@ void setup() {
   {
     Preferences pr;
     pr.begin("motonav", true);
-    qspiMHz = pr.getInt("qspi", 40);
+    qspiMHz = pr.getInt("qspi", 80);
     screenRot = pr.getInt("rot", 0) & 3;                            // v6.2 圆屏方向
     setScreenDeg(pr.getInt("rotd", screenRot * 90), false);         // v6.4 任意角度
     bootBrand = BootAnimation::valid(pr.getInt("bootbrand", 0));
@@ -423,7 +423,7 @@ void setup() {
     if (userMapScale < 0.1f || userMapScale > 1.0f || isnan(userMapScale)) userMapScale = 0.7f;
     int savedBright = constrain(pr.getInt("brightness", 200), 5, 255);
     pr.end();
-    if (qspiMHz != 40 && qspiMHz != 60 && qspiMHz != 80) qspiMHz = 40;
+    if (qspiMHz != 40 && qspiMHz != 60 && qspiMHz != 80) qspiMHz = 80;
     if (!gfx->begin(qspiMHz * 1000000)) Serial.println("gfx->begin() failed!");
     panel->setBrightness(savedBright);
   }

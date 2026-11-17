@@ -148,6 +148,7 @@ void drawBattery(int x0, int y0, bool backing = false) {
 }
 
 void drawStatus() {
+  if (onWaitScreen || !inNav) return;             // 待机主页及各页面不画顶部状态栏旧电池
   gfx->fillRect(CX - 32, 18, 64, 30, C_BLACK);   // 擦除旧电池区域
   drawBattery(CX - 28, 20);                      // 放大电池图标并居中
   needFlush = true;

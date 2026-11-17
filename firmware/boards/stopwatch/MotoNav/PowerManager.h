@@ -3,6 +3,8 @@
 #include <Wire.h>
 #include "IdlePowerOff.h"
 
+extern bool onWaitScreen;
+
 // 顶部小圆点：绿 = 蓝牙已连接，灰 = 未连接
 // ================= v6.8 电池（AXP2101 电源芯片，和触摸屏共用 I2C，地址 0x34）=================
 #define PMU_ADDR 0x34
@@ -148,6 +150,7 @@ void drawBattery(int x0, int y0, bool backing = false) {
 }
 
 void drawStatus() {
+  if (onWaitScreen || !inNav) return;             // 待机主页及各页面不画顶部状态栏旧电池
   gfx->fillRect(CX - 32, 18, 64, 30, C_BLACK);   // 擦除旧电池区域
   drawBattery(CX - 28, 20);                      // 放大电池图标并居中
   needFlush = true;

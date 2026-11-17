@@ -11,7 +11,7 @@ uint16_t *volatile flushSrc = nullptr;
 volatile uint32_t flushMsAcc = 0, flushCnt = 0;
 
 // ---- v2.6 快速刷屏：自己往屏幕数据线上排队发送，两块缓冲轮流用（一块在传、一块在准备）----
-#define FAST_PIX 4096                     // 每段像素数（8KB）
+#define FAST_PIX 16384                    // 每段像素数（扩大到32KB，大幅减少FreeRTOS任务切换与DMA中断次数，推屏时间成倍缩短）
 spi_device_handle_t fastDev = nullptr;
 uint8_t *fastBuf[2] = {nullptr, nullptr};
 
@@ -146,7 +146,19 @@ void fastPush(const uint16_t *fb) {
     } else if (screenRot == 0) {
       const uint32_t *src = (const uint32_t *)(fb + sent);
       uint32_t *dst = (uint32_t *)fastBuf[bi];
-      for (uint32_t i = 0; i < l / 2; i++) {
+      uint32_t count = l / 2;
+      uint32_t i = 0;
+      for (; i + 3 < count; i += 4) {
+        uint32_t v0 = src[i];
+        uint32_t v1 = src[i + 1];
+        uint32_t v2 = src[i + 2];
+        uint32_t v3 = src[i + 3];
+        dst[i]     = ((v0 & 0x00FF00FFu) << 8) | ((v0 >> 8) & 0x00FF00FFu);
+        dst[i + 1] = ((v1 & 0x00FF00FFu) << 8) | ((v1 >> 8) & 0x00FF00FFu);
+        dst[i + 2] = ((v2 & 0x00FF00FFu) << 8) | ((v2 >> 8) & 0x00FF00FFu);
+        dst[i + 3] = ((v3 & 0x00FF00FFu) << 8) | ((v3 >> 8) & 0x00FF00FFu);
+      }
+      for (; i < count; i++) {
         uint32_t v = src[i];
         dst[i] = ((v & 0x00FF00FFu) << 8) | ((v >> 8) & 0x00FF00FFu);
       }
@@ -203,8 +215,10 @@ void flushTask(void *arg) {
 }
 
 // v2.6 等刷屏完成；超过 3 秒还没完成，说明快速刷屏在这块板子上不工作：关掉它并重启
+volatile uint32_t flushWaitUsAcc = 0;   // 渲染线程等待上一帧推屏完成的累计微秒（性能统计）
 void flushWait() {
-  if (xSemaphoreTake(flushDone, pdMS_TO_TICKS(3000)) == pdTRUE) return;
+  uint32_t fw0 = micros();
+  if (xSemaphoreTake(flushDone, pdMS_TO_TICKS(3000)) == pdTRUE) { flushWaitUsAcc += micros() - fw0; return; }
   if (fastFlushOn) saveAndRestart("fastf", 0, true);
   xSemaphoreTake(flushDone, portMAX_DELAY);
 }

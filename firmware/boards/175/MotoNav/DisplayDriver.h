@@ -203,8 +203,10 @@ void flushTask(void *arg) {
 }
 
 // v2.6 等刷屏完成；超过 3 秒还没完成，说明快速刷屏在这块板子上不工作：关掉它并重启
+volatile uint32_t flushWaitUsAcc = 0;   // 渲染线程等待上一帧推屏完成的累计微秒（性能统计）
 void flushWait() {
-  if (xSemaphoreTake(flushDone, pdMS_TO_TICKS(3000)) == pdTRUE) return;
+  uint32_t fw0 = micros();
+  if (xSemaphoreTake(flushDone, pdMS_TO_TICKS(3000)) == pdTRUE) { flushWaitUsAcc += micros() - fw0; return; }
   if (fastFlushOn) saveAndRestart("fastf", 0, true);
   xSemaphoreTake(flushDone, portMAX_DELAY);
 }

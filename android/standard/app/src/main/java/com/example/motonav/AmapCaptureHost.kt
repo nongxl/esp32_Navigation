@@ -84,6 +84,10 @@ class AmapCaptureHost private constructor(private val context: Context,private v
     }
 
     override fun capture(f: MapGeo.Frame,x0: Int,y0: Int,n: Int,satellite: Boolean,style: Int,done: (AmapSdkRaster.Shot?,String?) -> Unit) {
+        capture(f,x0,y0,n,if(satellite)3.5 else 2.0,satellite,style,done)
+    }
+
+    override fun capture(f: MapGeo.Frame,x0: Int,y0: Int,n: Int,mpp: Double,satellite: Boolean,style: Int,done: (AmapSdkRaster.Shot?,String?) -> Unit) {
         if (!alive || !loaded) { done(null,"高德地图初始化中，稍后自动重试"); return }
         if (pending!=null) { done(null,"高德正在准备上一块底图"); return }
         handler.removeCallbacks(autoPauseRunnable)
@@ -101,8 +105,8 @@ class AmapCaptureHost private constructor(private val context: Context,private v
         }
         map.showBuildings(style==MapStylePolicy.ORIGINAL);withoutBuildings=null
         val margin=if(n==600)20.0 else 160.0
-        val bounds=LatLngBounds(LatLng(f.lat(y0-n*(if(satelliteCapture)3.5 else 2.0)-margin),f.lng(x0-margin)),
-            LatLng(f.lat(y0+margin),f.lng(x0+n*(if(satelliteCapture)3.5 else 2.0)+margin)))
+        val bounds=LatLngBounds(LatLng(f.lat(y0-n*mpp-margin),f.lng(x0-margin)),
+            LatLng(f.lat(y0+margin),f.lng(x0+n*mpp+margin)))
         var cameraDone=false
         map.showMapText(captureStyle==MapStylePolicy.ORIGINAL)
         map.setOnCameraChangeListener(object: AMap.OnCameraChangeListener {
@@ -115,17 +119,17 @@ class AmapCaptureHost private constructor(private val context: Context,private v
                         map.moveCamera(CameraUpdateFactory.newCameraPosition(CameraPosition.Builder(p).tilt(tilt).build()))
                         return
                     }
-                    cameraDone=true;handler.postDelayed({ request(id,f,x0,y0,n) },150)
+                    cameraDone=true;handler.postDelayed({ request(id,f,x0,y0,n,mpp) },150)
                 }
             }
         })
         handler.postDelayed({
             if(!alive || id!=serial)return@postDelayed
             map.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds,size,size,0))
-            handler.postDelayed({ if (id==serial && !cameraDone) { cameraDone=true; request(id,f,x0,y0,n) } },1800)
+            handler.postDelayed({ if (id==serial && !cameraDone) { cameraDone=true; request(id,f,x0,y0,n,mpp) } },1800)
         },if(resized)300 else 0)
     }
-    private fun request(id: Int,f: MapGeo.Frame,x0: Int,y0: Int,n: Int) {
+    private fun request(id: Int,f: MapGeo.Frame,x0: Int,y0: Int,n: Int,mpp: Double) {
         if (!alive || id!=serial || pending==null) return
         try {
             map.showMapText(captureStyle==MapStylePolicy.ORIGINAL)
@@ -138,7 +142,7 @@ class AmapCaptureHost private constructor(private val context: Context,private v
                             if (status!=1 || bitmap==null) {
                                 if (SystemClock.elapsedRealtime()-started<38000) {
                                     AmapSdkRaster.state="高德底图尚未加载完整，保留当前地图等待重试"
-                                    handler.postDelayed({ request(id,f,x0,y0,n) },1200)
+                                    handler.postDelayed({ request(id,f,x0,y0,n,mpp) },1200)
                                 } else finish(null,"高德底图加载未完成，保留当前地图")
                                 return@post
                             }
@@ -146,8 +150,8 @@ class AmapCaptureHost private constructor(private val context: Context,private v
                             val camera=map.cameraPosition
                             if(n==600)require(camera.zoom>=17f){"楼块缩放级别不足，保留普通底图"}
                             require(abs(camera.tilt)<0.1 && minOf(abs(camera.bearing),abs(camera.bearing-360))<0.1) { "高德截图方向不正确" }
-                            val north=f.lat(y0.toDouble()); val south=f.lat(y0-n*(if(satelliteCapture)3.5 else 2.0))
-                            val west=f.lng(x0.toDouble()); val east=f.lng(x0+n*(if(satelliteCapture)3.5 else 2.0))
+                            val north=f.lat(y0.toDouble()); val south=f.lat(y0-n*mpp)
+                            val west=f.lng(x0.toDouble()); val east=f.lng(x0+n*mpp)
                             val projection=map.projection
                             val tl=projection.toScreenLocation(LatLng(north,west)); val tr=projection.toScreenLocation(LatLng(north,east))
                             val bl=projection.toScreenLocation(LatLng(south,west)); val br=projection.toScreenLocation(LatLng(south,east))
@@ -160,7 +164,7 @@ class AmapCaptureHost private constructor(private val context: Context,private v
                                 if(reference==null) {
                                     withoutBuildings=pixels
                                     map.showBuildings(true)
-                                    handler.postDelayed({ request(id,f,x0,y0,n) },150)
+                                    handler.postDelayed({ request(id,f,x0,y0,n,mpp) },150)
                                     return@post
                                 }
                                 withoutBuildings=null

@@ -126,7 +126,7 @@
 - **[Trentct/m5stack-stopwatch-avatar](https://github.com/Trentct/m5stack-stopwatch-avatar)**：提供了出色的 KK 60fps 动态表情引擎；
 - **[M5Stack](https://m5stack.com/)**：提供了 M5Stopwatch 硬件及驱动生态支持；
 - **[vanddccd](https://github.com/vanddccd)**：为 Stopwatch 贡献了硬件级真关机电源管理优化；
-- **清野**：热情参与实车道路路测，针对转弯响应、缩放手势与视觉交互提出了宝贵实测建议。
+- **[Qingye0221](https://github.com/Qingye0221)**：热情参与实车道路路测，针对转弯响应、缩放手势与视觉交互提出了宝贵实测建议。
 
 ### 开源许可证合规
 1. **本项目自研代码与文档**：本仓库中权利人自研的导航逻辑、通讯协议、现代 UI、自动化打包脚本遵循根目录 [LICENSE.md](LICENSE.md)，仅供个人非商业学习交流使用；

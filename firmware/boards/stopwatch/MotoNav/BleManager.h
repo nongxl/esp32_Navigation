@@ -166,6 +166,7 @@ class ServerCB : public BLEServerCallbacks {
     bleConnected = false; ++mediaConnectionEpoch;
     bleAuthed = false;
     bleConnHandle = 0xFFFF;
+    phoneBatPct = -1; phoneBatChg = false; phoneSig1 = -1; phoneSig2 = -1;
     hidSubscribed = false; hidSubscriber = 0xFFFF; ++hidSessionEpoch;
     if (!powerOffPending) BLEDevice::startAdvertising();
   }

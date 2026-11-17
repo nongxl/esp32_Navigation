@@ -64,9 +64,12 @@ public final class RasterPacket {
 
     public static boolean valid(byte[] b, int frame, int x, int y) {
         if (b == null || b.length < 17 || b.length > 480000 || u16(b, 0) != frame || i32(b, 2) != x || i32(b, 6) != y ||
-            u16(b, 10) != 1200 || u16(b, 12) != 1200 ||
-            (u16(b, 14) != 2000 && u16(b, 14) != (2000 | FLAG_BUILDINGS) && u16(b, 14) != (2000 | FLAG_PALETTE))) return false;
-        if ((u16(b, 14) & FLAG_PALETTE) != 0 && !hasPalette(b)) return false;
+            u16(b, 10) != 1200 || u16(b, 12) != 1200) return false;
+        int flags = u16(b, 14);
+        int mm = flags & MM_MASK;
+        if (mm != 2000 && mm != 3500 && mm != 4000 && mm != 5000 && mm != 6000) return false;
+        if ((flags & FLAG_BUILDINGS) != 0 && (flags & FLAG_PALETTE) != 0) return false;
+        if ((flags & FLAG_PALETTE) != 0 && !hasPalette(b)) return false;
         int pos = hasPalette(b) ? 48 : 16, pixels = 0;
         while (pos < b.length && pixels < 1440000) {
             int v = b[pos++] & 255;
