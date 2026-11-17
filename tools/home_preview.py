@@ -56,6 +56,42 @@ NUM = {
  '-': [('H',0.60,3.60, 4.40,3.60, 0.80)],
 }
 
+# ------------------------------------------------------------ 数字连续折线字库
+# 每个数字由 1~2 条连续折线构成，转角补圆接头，从根本上消除离散笔画的断口。
+# 与固件 HomeFace.h 的 HOME_GLYPH 一一对应。
+STROKE_R = 0.55   # 笔画半宽（列单位）
+GLYPH = {
+ '0': [([2.50,4.15,4.15,2.50,0.85,0.85], [0.40,1.10,5.90,6.60,5.90,1.10], True)],
+ '1': [([1.55,2.50,2.50], [1.65,0.40,6.60], False)],
+ '2': [([0.85,1.85,4.15,4.15,0.85,0.85,4.15], [1.15,0.40,0.40,3.25,3.25,6.60,6.60], False)],
+ '3': [([0.85,4.15,4.15,2.40,4.15,4.15,0.85], [0.40,0.40,3.25,3.25,3.25,6.60,6.60], False)],
+ '4': [([4.35,0.80,3.35,3.35], [4.65,4.65,0.40,6.60], False)],
+ '5': [([4.15,0.85,0.85,3.45,4.15,0.85], [0.40,0.40,3.25,3.25,6.60,6.60], False)],
+ '6': [([4.15,2.45,0.85,0.85,4.15,4.15,0.85], [0.55,0.55,2.10,6.60,6.60,3.40,3.40], False)],
+ '7': [([0.60,4.40,1.85], [0.40,0.40,6.60], False)],
+ '8': [([0.85,1.55,3.45,4.15,4.15,3.45,1.55,0.85], [1.10,0.40,0.40,1.10,2.80,3.50,3.50,2.80], True),
+       ([0.85,1.55,3.45,4.15,4.15,3.45,1.55,0.85], [4.20,3.50,3.50,4.20,5.90,6.60,6.60,5.90], True)],
+ '9': [([0.85,1.55,3.45,4.15,4.15,3.45,1.55,0.85], [1.10,0.40,0.40,1.10,2.80,3.50,3.50,2.80], True),
+       ([4.15,4.15], [3.50,6.60], False)],
+}
+
+# 七段数码管段定义（与固件 spoSegChar / HomeFace.h homeSeg7Digit 一致）
+SEG7 = {
+ '0':'ABCDEF', '1':'BC', '2':'ABGED', '3':'ABGCD', '4':'FGBC',
+ '5':'AFGCD', '6':'AFGECD', '7':'ABC', '8':'ABCDEFG', '9':'ABCDFG',
+}
+
+def draw_seg7(d, ch, x, y, w, h, t, col):
+    segs = SEG7.get(ch, '')
+    half, r, ht = h//2, t//2, h//2 - t//2
+    if 'A' in segs: d.rounded_rectangle([x+t/2, y, x+w-t/2, y+t], radius=r, fill=col)
+    if 'G' in segs: d.rounded_rectangle([x+t/2, y+half-t/2, x+w-t/2, y+half+t/2], radius=r, fill=col)
+    if 'D' in segs: d.rounded_rectangle([x+t/2, y+h-t, x+w-t/2, y+h], radius=r, fill=col)
+    if 'F' in segs: d.rounded_rectangle([x, y+t/2, x+t, y+t/2+ht], radius=r, fill=col)
+    if 'B' in segs: d.rounded_rectangle([x+w-t, y+t/2, x+w, y+t/2+ht], radius=r, fill=col)
+    if 'E' in segs: d.rounded_rectangle([x, y+half, x+t, y+half+ht], radius=r, fill=col)
+    if 'C' in segs: d.rounded_rectangle([x+w-t, y+half, x+w, y+half+ht], radius=r, fill=col)
+
 # ------------------------------------------------------------ 字母点阵 5x7
 LET = {
  'A':[0x7C,0x12,0x11,0x12,0x7C],'B':[0x7F,0x49,0x49,0x49,0x36],'C':[0x3E,0x41,0x41,0x41,0x22],
@@ -83,6 +119,14 @@ def cap(d, x0,y0,x1,y1,col):
 
 def draw_num(d, ch, x, y, cw, chh, col, bg):
     """绘制数字/符号笔画，x,y 为网格左上角"""
+    if ch in SEG7:
+        draw_seg7(d, ch, x, y, round(4.6*cw), round(7*chh), round(1.06*cw), col)
+        return
+    if ch==':':
+        bw,bh=round(1.10*cw),round(0.90*chh)
+        for yy in (y+1.90*chh, y+4.15*chh):
+            cap(d, x, yy, x+bw, yy+bh, col)
+        return
     for s in NUM[ch]:
         k = s[0]
         if k=='H':
@@ -131,6 +175,8 @@ def draw_num(d, ch, x, y, cw, chh, col, bg):
 
 def num_w(ch, cw, chh):
     """数字墨迹宽度（像素）：按真实几何求各笔画的水平包络"""
+    if ch in SEG7: return 4.6*cw
+    if ch==':': return 1.30*cw
     xs=[]
     for s in NUM[ch]:
         k=s[0]
@@ -160,6 +206,7 @@ def num_w(ch, cw, chh):
 
 def num_left(ch, cw, chh):
     """数字墨迹左缘相对网格原点的偏移（像素）"""
+    if ch in SEG7 or ch==':': return 0
     mn=1e9
     for s in NUM[ch]:
         k=s[0]

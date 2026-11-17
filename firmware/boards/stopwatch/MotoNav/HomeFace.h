@@ -104,6 +104,119 @@ static inline const HomeStroke* homeNumStrokes(char c, uint8_t &n) {
 }
 
 // ---------------------------------------------------------------------------
+// 数字：连续折线字库（取代上面的离散笔画拼装）
+//
+// 离散笔画的端点只是"碰巧接触"，实际渲染经 float -> int 取整后会露出 1~2px
+// 错位断口（尤其 '2'/'7' 的横斜交界）。这里把每个数字定义成一条连续路径，
+// 逐段填充四边形并在每个顶点补圆接头，笔画天然连成一体。
+// 网格坐标仍是 x 0..5 / y 0..7，墨迹包络由顶点 ± r 精确给出，排版不变。
+// ---------------------------------------------------------------------------
+#define HOME_POLY_PT  10
+struct HomePath {
+  uint8_t n;
+  bool closed;
+  float x[HOME_POLY_PT], y[HOME_POLY_PT];
+};
+struct HomeGlyph {
+  uint8_t nPath;
+  HomePath p[2];
+};
+
+// 笔画半宽（相对列宽）；直径约等于 11px，与原字形粗细一致
+#define HOME_STROKE_R 0.55f
+
+static const HomeGlyph HOME_GLYPH[10] = {
+  // '0' 圆角闭合环
+  {1, {{6, true, {2.50f,4.15f,4.15f,2.50f,0.85f,0.85f},
+                 {0.40f,1.10f,5.90f,6.60f,5.90f,1.10f}}}},
+  // '1' 旗角 + 竖笔
+  {1, {{3, false, {1.55f,2.50f,2.50f},
+                  {1.65f,0.40f,6.60f}}}},
+  // '2' 上横→右上折→中横→左下折→下横，一笔到底
+  {1, {{7, false, {0.85f,1.85f,4.15f,4.15f,0.85f,0.85f,4.15f},
+                  {1.15f,0.40f,0.40f,3.25f,3.25f,6.60f,6.60f}}}},
+  // '3' 上横→右折→中横（回折）→下横
+  {1, {{7, false, {0.85f,4.15f,4.15f,2.40f,4.15f,4.15f,0.85f},
+                  {0.40f,0.40f,3.25f,3.25f,3.25f,6.60f,6.60f}}}},
+  // '4' 横杆→斜笔→竖笔
+  {1, {{4, false, {4.35f,0.80f,3.35f,3.35f},
+                  {4.65f,4.65f,0.40f,6.60f}}}},
+  // '5' 上横→左竖→中横→右下折→下横
+  {1, {{6, false, {4.15f,0.85f,0.85f,3.45f,4.15f,0.85f},
+                  {0.40f,0.40f,3.25f,3.25f,6.60f,6.60f}}}},
+  // '6' 上横→左下折→左竖→下横→右竖→中横
+  {1, {{7, false, {4.15f,2.45f,0.85f,0.85f,4.15f,4.15f,0.85f},
+                  {0.55f,0.55f,2.10f,6.60f,6.60f,3.40f,3.40f}}}},
+  // '7' 上横→斜笔（一笔到底，无接缝）
+  {1, {{3, false, {0.60f,4.40f,1.85f},
+                  {0.40f,0.40f,6.60f}}}},
+  // '8' 上下两个闭合环，在中横处相接
+  {2, {{8, true, {0.85f,1.55f,3.45f,4.15f,4.15f,3.45f,1.55f,0.85f},
+                {1.10f,0.40f,0.40f,1.10f,2.80f,3.50f,3.50f,2.80f}},
+       {8, true, {0.85f,1.55f,3.45f,4.15f,4.15f,3.45f,1.55f,0.85f},
+                 {4.20f,3.50f,3.50f,4.20f,5.90f,6.60f,6.60f,5.90f}}}},
+  // '9' 上闭合环 + 右侧竖尾
+  {2, {{8, true, {0.85f,1.55f,3.45f,4.15f,4.15f,3.45f,1.55f,0.85f},
+                {1.10f,0.40f,0.40f,1.10f,2.80f,3.50f,3.50f,2.80f}},
+       {2, false, {4.15f,4.15f},
+                  {3.50f,6.60f}}}},
+};
+
+// 用两个三角形填充一条粗线段（法向量在像素空间计算，保证各方向等粗）
+static inline void homeSeg(float ax, float ay, float bx, float by, float r, uint16_t col) {
+  float dx = bx - ax, dy = by - ay;
+  float L = sqrtf(dx * dx + dy * dy);
+  if (L < 0.001f) return;
+  float nx = -dy / L * r, ny = dx / L * r;
+  int x0 = (int)lroundf(ax + nx), y0 = (int)lroundf(ay + ny);
+  int x1 = (int)lroundf(bx + nx), y1 = (int)lroundf(by + ny);
+  int x2 = (int)lroundf(bx - nx), y2 = (int)lroundf(by - ny);
+  int x3 = (int)lroundf(ax - nx), y3 = (int)lroundf(ay - ny);
+  gfx->fillTriangle(x0, y0, x1, y1, x2, y2, col);
+  gfx->fillTriangle(x0, y0, x2, y2, x3, y3, col);
+}
+
+// 画一条连续折线：段与段之间用圆接头补齐，杜绝断口
+static inline void homePathDraw(const HomePath &p, float ox, float oy,
+                                float cw, float chh, uint16_t col) {
+  float r = HOME_STROKE_R * cw;
+  int ir = (int)lroundf(r);
+  int last = p.closed ? p.n : p.n - 1;
+  for (int i = 0; i < last; i++) {
+    int j = (i + 1) % p.n;
+    homeSeg(ox + p.x[i] * cw, oy + p.y[i] * chh,
+            ox + p.x[j] * cw, oy + p.y[j] * chh, r, col);
+  }
+  // 所有顶点都补圆接头；开放路径的首尾即为圆帽
+  for (uint8_t i = 0; i < p.n; i++)
+    gfx->fillCircle((int)lroundf(ox + p.x[i] * cw),
+                    (int)lroundf(oy + p.y[i] * chh), ir, col);
+}
+
+static inline void homeGlyphDraw(char c, float ox, float oy,
+                                 float cw, float chh, uint16_t col) {
+  if (c < '0' || c > '9') return;
+  const HomeGlyph &g = HOME_GLYPH[c - '0'];
+  for (uint8_t k = 0; k < g.nPath; k++) homePathDraw(g.p[k], ox, oy, cw, chh, col);
+}
+
+// 数字的墨迹包络：折线顶点 ± 笔画半径（圆接头不会超出此范围）
+static inline void homeGlyphEnvelope(char c, float cw, float &mn, float &mx) {
+  mn = 1e9f; mx = -1e9f;
+  if (c < '0' || c > '9') return;
+  const HomeGlyph &g = HOME_GLYPH[c - '0'];
+  float r = HOME_STROKE_R;
+  for (uint8_t k = 0; k < g.nPath; k++) {
+    const HomePath &p = g.p[k];
+    for (uint8_t i = 0; i < p.n; i++) {
+      mn = min(mn, p.x[i] - r);
+      mx = max(mx, p.x[i] + r);
+    }
+  }
+  mn *= cw; mx *= cw;
+}
+
+// ---------------------------------------------------------------------------
 // 字母 5x7 点阵（行合并 + 列合并 → 实心连续笔画）
 // ---------------------------------------------------------------------------
 static const uint8_t HOME_LET[26][5] = {
@@ -194,8 +307,40 @@ static inline void homeDrawNumStroke(const HomeStroke &s, float x, float y,
   }
 }
 
+// ---------------------------------------------------------------------------
+// 七段数码管数字（电子管字体）——与时速表 spoSegChar 同款圆头段风格
+// 网格 x∈[0,5] / y∈[0,7]，数字墨迹宽 4.6 列、高 7 行
+// ---------------------------------------------------------------------------
+static inline void homeSeg7Digit(int x, int y, int w, int h, int t, char c, uint16_t col) {
+  bool A=false,B=false,C=false,D=false,E=false,F=false,G=false;
+  switch (c) {
+    case '0': A=B=C=D=E=F=true; break;
+    case '1': B=C=true; break;
+    case '2': A=B=G=E=D=true; break;
+    case '3': A=B=G=C=D=true; break;
+    case '4': F=G=B=C=true; break;
+    case '5': A=F=G=C=D=true; break;
+    case '6': A=F=G=E=C=D=true; break;
+    case '7': A=B=C=true; break;
+    case '8': A=B=C=D=E=F=G=true; break;
+    case '9': A=B=C=D=F=G=true; break;
+    default: return;
+  }
+  int half = h / 2, r = t / 2;
+  int ht = half - t / 2;              // 竖段端点与横段重叠，拐角不留缝
+  if (A) gfx->fillRoundRect(x + t/2, y,          w - t, t, r, col);
+  if (G) gfx->fillRoundRect(x + t/2, y + half - t/2, w - t, t, r, col);
+  if (D) gfx->fillRoundRect(x + t/2, y + h - t,  w - t, t, r, col);
+  if (F) gfx->fillRoundRect(x,       y + t/2,    t, ht, r, col);
+  if (B) gfx->fillRoundRect(x + w-t, y + t/2,    t, ht, r, col);
+  if (E) gfx->fillRoundRect(x,       y + half,   t, ht, r, col);
+  if (C) gfx->fillRoundRect(x + w-t, y + half,   t, ht, r, col);
+}
+
 // 数字/符号的墨迹左缘（相对网格原点）与宽度（像素）
 static inline float homeNumLeft(char c, float cw, float chh) {
+  // 七段数字与冒号墨迹左缘都在原点
+  if ((c >= '0' && c <= '9') || c == ':') return 0;
   float mn = 1e9f;
   uint8_t n = 0;
   const HomeStroke *st = homeNumStrokes(c, n);
@@ -217,6 +362,9 @@ static inline float homeNumLeft(char c, float cw, float chh) {
 }
 
 static inline float homeNumWidth(char c, float cw, float chh) {
+  // 七段数字墨迹宽 4.6 列；冒号沿用原方块宽 1.3 列
+  if (c >= '0' && c <= '9') return 4.6f * cw;
+  if (c == ':') return 1.30f * cw;
   float mn = 1e9f, mx = -1e9f;
   uint8_t n = 0;
   const HomeStroke *st = homeNumStrokes(c, n);
@@ -315,11 +463,27 @@ static inline void homeDrawText(float x, float y, const char *s, float cw, float
     if (isNum) {
       float left = homeNumLeft(c, cw, chh);
       float gx = cur - left;
-      uint8_t n = 0;
-      const HomeStroke *st = homeNumStrokes(c, n);
-      if (st) {
-        for (uint8_t k = 0; k < n; k++)
-          homeDrawNumStroke(st[k], gx, y, cw, chh, col, bg);
+      if (c >= '0' && c <= '9') {
+        // 数字：七段数码管（电子管字体，与时速表同款圆头段）
+        int w = (int)lroundf(4.6f * cw);
+        int h = (int)lroundf(7.0f * chh);
+        int t = (int)lroundf(1.06f * cw);
+        homeSeg7Digit((int)lroundf(gx), (int)lroundf(y), w, h, t, c, col);
+      } else if (c == ':') {
+        // 冒号：两个圆角小方块（电子管风格）
+        int bw = (int)lroundf(1.10f * cw);
+        int bh = (int)lroundf(0.90f * chh);
+        homeCap((int)lroundf(gx), (int)lroundf(y + 1.90f * chh),
+                (int)lroundf(gx) + bw, (int)lroundf(y + 1.90f * chh) + bh, col);
+        homeCap((int)lroundf(gx), (int)lroundf(y + 4.15f * chh),
+                (int)lroundf(gx) + bw, (int)lroundf(y + 4.15f * chh) + bh, col);
+      } else {
+        uint8_t n = 0;
+        const HomeStroke *st = homeNumStrokes(c, n);
+        if (st) {
+          for (uint8_t k = 0; k < n; k++)
+            homeDrawNumStroke(st[k], gx, y, cw, chh, col, bg);
+        }
       }
       cur += homeNumWidth(c, cw, chh) + gap;
     } else {
