@@ -79,19 +79,16 @@
 
 ##### 🌟 方式一：极速免编译打包（小白用户强烈推荐，零环境、2秒出包）
 无需下载几百兆编译环境，无需安装 Android Studio 或配置 SDK：
-1. **下载小白发布包**：前往 [Releases 页面](../../releases) 下载 `esp32_Navigation-QuickPack-Windows.zip` 并解压；
-2. **一键生成专属包**：双击运行解压目录下的 `一键生成专属安装包.bat`；
+1. **下载小白发布包**：前往 [Releases 页面](https://github.com/nongxl/esp32_Navigation/releases) 下载 `esp32_Navigation-QuickPack-Windows.zip` 并解压；
+2. **一键生成专属包**：双击运行解压目录下的 **`一键生成专属安装包.bat`**；
 3. **极速完成**：工具将在 **2 秒钟** 内自动生成当前电脑专属的 `esp32_Navigation-personal.apk` 及 `高德Key申请信息.txt`；
-4. **获取免费 Key**：按照文本指引前往[高德开放平台](https://console.amap.com/)粘贴包名与 SHA1 获取 Android Key，安装 App 后填入即可开箱使用！
-5. **升级平滑**：后续升级新版本底包覆盖运行即可，签名自动复用，**无需重新申请高德 Key**。
+4. **获取免费 Key**：按照文本指引前往[高德开放平台](https://console.amap.com/)粘贴包名与 SHA1 获取免费 Android Key，安装 App 后填入即可开箱使用！
+5. **升级平滑**：后续升级新版本只需解压新包覆盖运行即可，签名密钥自动复用，**无需重新申请高德 Key**。
 
 ##### 🛠️ 方式二：全源码本地打包（面向开发者）
-#### 安卓端（Android）
-- **小白用户极速安装 (推荐)**：前往本仓库 [Releases 页面](https://github.com/nongxl/esp32_Navigation/releases) 下载 `esp32_Navigation-QuickPack-Windows.zip`，解压后双击运行 **`一键生成专属安装包.bat`**，2秒即可生成专属安装包 `esp32_Navigation-personal.apk` 及独立包名与 SHA1，完全无需配置 Java、Android Studio 或编译环境！
-- **开发者本地源码打包**：
-  1. 双击根目录的 `一键打包-普通版.bat`（或在 PowerShell 中运行 `.\Build-Personal.ps1`）；
-  2. 脚本自动检测环境并完成 Gradle 编译，产物位于 `output/` 目录；
-  3. 开发者可运行 `导出小白极速发布包.bat` 一键生成供发布给小白用户的免编译分发包。
+1. 双击根目录的 `一键打包-普通版.bat`（或在 PowerShell 中运行 `.\Build-Personal.ps1`）；
+2. 脚本自动检测环境并完成 Gradle 编译，产物位于 `output/` 目录；
+3. 开发者可运行 `导出小白极速发布包.bat` 一键生成供发布给小白用户的免编译分发包。
 
 #### 苹果端（iOS）—— 开源共建中
 - **现状说明**：iOS 端已完成现代深色卡片 UI、SwiftUI 全场景路线规划及多出行模式支持；
