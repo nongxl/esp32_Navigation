@@ -15,8 +15,25 @@ void updateStats() {
     String q = "Q";                                    // v5.8 分步用时（0.1 毫秒/帧）
     for (int i = 0; i < PROF_N; i++) q += "," + String(profAcc[i] / 100 / mapFrames);
     pendingProf = q;
+#if PERF_LOG
+    if (Serial) {
+      const uint32_t n = mapFrames, pc = perf.pCnt, rc = perf.rasCalls;
+      Serial.printf("[PERF] fps=%.1f dt(avg/max)=%u/%ums >50=%u >100=%u | draw=%ums map=%ums ras=%ums ovl=%ums | "
+                    "core(main/wait/help)=%u/%u/%ums | flush=%ums fwait=%ums qspi=%u fast=%d\n",
+                    n / secs, perf.dtSumMs / (n > 1 ? n - 1 : 1), perf.dtMaxMs, perf.over50, perf.over100,
+                    mapDrawMsAcc / n, mapMsAcc / n, rasMsAcc / n, ovlMsAcc / n,
+                    rc ? perf.rasMainUs / rc / 1000 : 0, rc ? perf.rasWaitUs / rc / 1000 : 0, rc ? perf.rasHelpUs / rc / 1000 : 0,
+                    fc ? fm / fc : 0, (uint32_t)(flushWaitUsAcc / n / 1000), (unsigned)qspiMHz, fastDev ? 1 : 0);
+      Serial.printf("[PERF] pose #p=%u gap(avg/max)=%u/%ums spd=%.0fkm/h | hdg err.max=%.1f vel.max=%.0f step.max=%.1f clamp12=%u rot.frames=%u rate.max=%.1f | "
+                    "scale=%.2f raster=%d vice=%d back=%u style=%d\n",
+                    pc, pc ? perf.pGapSumMs / pc : 0, perf.pGapMaxMs, posKmh,
+                    perf.hdgErrMax, perf.hdgVelMax, perf.hdgStepMax, perf.stepClamp, perf.rotFrames, perf.hdgRateMax,
+                    viewScale, rasterValid ? 1 : 0, rasterViceValid ? 1 : 0, perf.backFrames, styleIdx());
+    }
+#endif
   }
   for (int i = 0; i < PROF_N; i++) profAcc[i] = 0;
+  perf = PerfStats(); flushWaitUsAcc = 0;
   statAt = now; mapFrames = 0; mapDrawMsAcc = 0; mapMsAcc = 0; ovlMsAcc = 0; flushCnt = 0; flushMsAcc = 0; rasMsAcc = 0;
 }
 
@@ -84,10 +101,12 @@ void drawTrafficLightLab(uint32_t now) {
   }
   static uint32_t previous = 0;
   if (signature != previous) {
-    Serial.printf("TL JUNCTION DRAW layout=right-stack preview=%d count=%u L=%u S=%u R=%u inNav=%d map=%d\n",
-      preview, trafficLightLab.count(now),
-      trafficLightLab.phases[0].seconds(now), trafficLightLab.phases[1].seconds(now), trafficLightLab.phases[2].seconds(now),
-      inNav, mapModeActive());
+    if (Serial) {
+      Serial.printf("TL JUNCTION DRAW layout=right-stack preview=%d count=%u L=%u S=%u R=%u inNav=%d map=%d\n",
+        preview, trafficLightLab.count(now),
+        trafficLightLab.phases[0].seconds(now), trafficLightLab.phases[1].seconds(now), trafficLightLab.phases[2].seconds(now),
+        inNav, mapModeActive());
+    }
     previous = signature;
   }
   needFlush = true;

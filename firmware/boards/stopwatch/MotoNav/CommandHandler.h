@@ -191,14 +191,21 @@ void handleText(const String &m) {
     if (sscanf(m.c_str(), "#p,%d,%ld,%ld,%d,%d", &fr, &xd, &yd, &hd, &kmh) == 5) {
       // v2.6 记下“按旧数据推算的当前位置”和新位置的偏差，画面在 0.4 秒内平滑修正过去
       unsigned long nowMs = millis();
-      // v6.7 转弯速度：和上一次定位的朝向差 / 时间（太慢、隔太久、变化太离谱就当没在转）
-      float newRate = 0;
-      if (fr == posFrame && posAt) {
-        float fdt = (nowMs - posAt) / 1000.0f;
-        float dhd = hd - posHdg;
-        while (dhd > 180) dhd -= 360;
-        while (dhd < -180) dhd += 360;
-        if (fdt > 0.3f && fdt < 2.5f && kmh >= 6 && fabsf(dhd) < 120) newRate = constrain(dhd / fdt, -45.0f, 45.0f);
+      // v6.7 转弯速度：按 ≥0.3 秒的观察窗口计算（#p 可能很密：模拟导航约 10Hz，朝向取整到 1°，
+      // 逐包相减噪声很大且旧门限 fdt>0.3 永远不满足）。窗口没满时保持上次转速，不衰减。
+      static unsigned long hdgRefAt = 0; static int hdgRefVal = 0;
+      bool rateUpdated = false; float newRate = 0;
+      if (fr != posFrame || !posAt || !hdgRefAt) { hdgRefAt = nowMs; hdgRefVal = hd; }
+      else {
+        float el = (nowMs - hdgRefAt) / 1000.0f;
+        if (el >= 0.3f) {
+          float dhd = hd - hdgRefVal;
+          while (dhd > 180) dhd -= 360;
+          while (dhd < -180) dhd += 360;
+          if (el < 2.5f && kmh >= 6 && fabsf(dhd) < 120) newRate = constrain(dhd / el, -120.0f, 120.0f);
+          rateUpdated = true;                            // 车速太低/隔太久/变化离谱：当没在转（newRate=0）
+          hdgRefAt = nowMs; hdgRefVal = hd;
+        }
       }
       if (fr == posFrame && posAt) {
         float px, py, ph;
@@ -209,8 +216,14 @@ void handleText(const String &m) {
         if (ex * ex + ey * ey < 60 * 60) { corrX = ex; corrY = ey; corrAt = nowMs; }
         else { corrX = corrY = 0; corrAt = 0; }
       }
+#if PERF_LOG
+      if (posAt) {                                      // 统计 #p 到达间隔
+        uint32_t g = (uint32_t)(nowMs - posAt);
+        perf.pCnt++; perf.pGapSumMs += g; if (g > perf.pGapMaxMs) perf.pGapMaxMs = g;
+      }
+#endif
       posFrame = fr; posX = xd / 10.0f; posY = yd / 10.0f; posHdg = hd; posKmh = kmh; posAt = nowMs;
-      hdgRate = hdgRate * 0.3f + newRate * 0.7f;          // v6.7 稍微平滑一下，GPS 朝向偶尔抖一下不至于乱转
+      if (rateUpdated) hdgRate = hdgRate * 0.3f + newRate * 0.7f;   // v6.7 稍微平滑一下，GPS 朝向偶尔抖一下不至于乱转
       if (inNav) navDirty = true;
     }
     return;
@@ -268,7 +281,10 @@ void handleText(const String &m) {
     // Preserve legacy #R,quarter while applying the exact angle when supplied.
     int d;
     if (ScreenRotationCommand::parse(m.c_str(), d) && d != screenDeg) {
-      setScreenDeg(d, true); navDirty = true; needFlush = true;
+      setScreenDeg(d, true);
+      if (inNav) navDirty = true;
+      renderPage(page);
+      needFlush = true;
     }
     return;
   }
@@ -390,6 +406,24 @@ void handleText(const String &m) {
   if (m.startsWith("#n,")) { nightOn = m.substring(3).toInt() != 0; navDirty = true; return; }   // v3.0 夜间配色
   if (m == "#o") { ghostN = 0; navDirty = true; return; }   // v4.4 不显示原路线
   if (m == "#WXRESET" || m.startsWith("#WX,") || m.startsWith("#W,")) { return; }   // v5.3 天气
+  if (m.startsWith("#BAT,")) {
+    // #BAT,<phoneBatPct>,<charging>,<sig1>,<sig2>
+    const char *p = m.c_str() + 5;
+    phoneBatPct = (int8_t)atoi(p);
+    const char *p2 = strchr(p, ',');
+    if (p2) {
+      phoneBatChg = (atoi(p2 + 1) != 0);
+      const char *p3 = strchr(p2 + 1, ',');
+      if (p3) {
+        phoneSig1 = (int8_t)atoi(p3 + 1);
+        const char *p4 = strchr(p3 + 1, ',');
+        if (p4) phoneSig2 = (int8_t)atoi(p4 + 1);
+        else phoneSig2 = -1;
+      }
+    }
+    if (page == 1 && !inNav && !sliding) drawSettingsPage();
+    return;
+  }
   if (m.startsWith("#TIME,")) {
     const char *p = m.c_str() + 6;
     time_t ep = (time_t)strtoul(p, NULL, 10);

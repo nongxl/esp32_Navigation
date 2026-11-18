@@ -137,6 +137,26 @@ float hdgRate = 0;                   // v6.7 正在转弯的速度（度/秒，�
 int leadMs = 300;                    // v6.7 预判提前量（毫秒）
 float viewTargetHdg = 0;             // v6.7 地图朝向要追的目标（预判后的朝向）
 
+// ---- 性能统计（串口 [PERF] 日志用；每 2 秒由 updateStats() 输出并清零）----
+#ifndef PERF_LOG
+#define PERF_LOG 1
+#endif
+struct PerfStats {
+  // 帧间隔（drawMapFrame 入口到入口，毫秒）
+  uint32_t frames = 0, dtSumMs = 0, dtMaxMs = 0, over50 = 0, over100 = 0;
+  // 底图双核：主核（上半）耗时、等待辅核耗时、辅核（下半）耗时，微秒累计
+  uint32_t rasMainUs = 0, rasWaitUs = 0, rasHelpUs = 0, rasCalls = 0;
+  // #p 到达：次数、间隔和、最大间隔（毫秒）
+  uint32_t pCnt = 0, pGapSumMs = 0, pGapMaxMs = 0;
+  // 朝向：目标与显示差峰值(°)、显示角速度峰值(°/s)、单帧转角峰值(°)、hdgRate 峰值(°/s)
+  float hdgErrMax = 0, hdgVelMax = 0, hdgStepMax = 0, hdgRateMax = 0;
+  // 单帧转角触顶 12° 限幅次数
+  uint32_t stepClamp = 0;
+  // 帧里使用的状态
+  uint32_t rotFrames = 0;     // 朝向角速度 > 20°/s 的帧数
+  uint32_t backFrames = 0;    // 使用上一块底图羽化的帧数
+} perf;
+
 // v6.7 推算 t 时刻（再加 lead 秒）的位置和朝向：按当前车速和转弯速度沿弧线往前推（最多推 1.5 秒）
 void predictPose(unsigned long t, float lead, float &x, float &y, float &h) {
   float tau = fminf((t - posAt) / 1000.0f + lead, 1.5f);
@@ -544,7 +564,9 @@ volatile int helpY0 = 0, helpY1 = 0;
 void helperLoop(void *) {
   for (;;) {
     xSemaphoreTake(helpGo, portMAX_DELAY);
+    uint32_t hu0 = micros();
     if (helpFn) helpFn(helpY0, helpY1, 1);
+    perf.rasHelpUs += micros() - hu0;
     xSemaphoreGive(helpDone);
   }
 }
@@ -562,8 +584,11 @@ void parallelRows(void (*fn)(int, int, int), int y0, int y1) {
   int mid = (y0 + y1) / 2;
   helpFn = fn; helpY0 = mid; helpY1 = y1;
   xSemaphoreGive(helpGo);
+  uint32_t pu0 = micros();
   fn(y0, mid, 1);
+  uint32_t pu1 = micros();
   xSemaphoreTake(helpDone, portMAX_DELAY);
+  perf.rasMainUs += pu1 - pu0; perf.rasWaitUs += micros() - pu1; perf.rasCalls++;
 }
 
 // v2.5 画图片地图：屏幕上每个像素反算到地图图片上的位置，取颜色（只画圆环以内）
@@ -627,15 +652,17 @@ static inline uint16_t sampleSingleBilinear(int32_t U, int32_t V, const uint16_t
 }
 
 // 高性能定点双线性滤波 + 跨块 32px（64米）Smoothstep 交界渐变羽化融合：消除拼接割裂硬线
-static inline uint16_t sampleRasterBilinear(int32_t U, int32_t V, const uint16_t *pal, bool useBack, int backU, int backV) {
+// backU16 / backV16 为 16 位定点数（Q16），支持高精度亚像素无缝贴合
+static inline uint16_t sampleRasterBilinear(int32_t U, int32_t V, const uint16_t *pal, bool useBack, int32_t backU16, int32_t backV16) {
   int32_t ui = U >> 16, vi = V >> 16;
   bool inCur = ((uint32_t)ui < (uint32_t)rasW && (uint32_t)vi < (uint32_t)rasH);
   if (!inCur) {
     if (useBack) {
-      int32_t bui = ui + backU, bvi = vi + backV;
+      int32_t Uback = U + backU16, Vback = V + backV16;
+      int32_t bui = Uback >> 16, bvi = Vback >> 16;
       if ((uint32_t)bui < (uint32_t)rasterBackHeader.width && (uint32_t)bvi < (uint32_t)rasterBackHeader.height) {
         const uint16_t *bpal = RM.backHasPal ? RM.backPal : pal;
-        return sampleSingleBilinear(U + (backU << 16), V + (backV << 16), bpal, true);
+        return sampleSingleBilinear(Uback, Vback, bpal, true);
       }
     }
     return pal[0];
@@ -645,10 +672,11 @@ static inline uint16_t sampleRasterBilinear(int32_t U, int32_t V, const uint16_t
   if (useBack) {
     int32_t edgeDist = min(min(ui, (int32_t)rasW - 1 - ui), min(vi, (int32_t)rasH - 1 - vi));
     if (edgeDist < 32) {
-      int32_t bui = ui + backU, bvi = vi + backV;
+      int32_t Uback = U + backU16, Vback = V + backV16;
+      int32_t bui = Uback >> 16, bvi = Vback >> 16;
       if ((uint32_t)bui < (uint32_t)rasterBackHeader.width && (uint32_t)bvi < (uint32_t)rasterBackHeader.height) {
         const uint16_t *bpal = RM.backHasPal ? RM.backPal : pal;
-        uint16_t colBack = sampleSingleBilinear(U + (backU << 16), V + (backV << 16), bpal, true);
+        uint16_t colBack = sampleSingleBilinear(Uback, Vback, bpal, true);
         if (colBack != colCur) {
           uint32_t t = (uint32_t)((edgeDist + 1) * 256 / 33);
           uint32_t smooth = (t * t * (768 - 2 * t)) >> 16;
@@ -667,9 +695,18 @@ void rasterRows(int y0, int y1, int step) {
   float inv = 1.0f / sc, kpx = inv / rasMpp;
   int32_t DU = (int32_t)(cs * kpx * 65536.0f), DV = (int32_t)(sn * kpx * 65536.0f);
   const bool useBack = rasterBackValid && rasterBackHeader.frame == rasterFrame && !rasterViceValid;
-  const int backU = useBack ? (int)lroundf((rasX0 - rasterBackHeader.x0) / rasMpp) : 0;
-  const int backV = useBack ? (int)lroundf((rasterBackHeader.y0 - rasY0) / rasMpp) : 0;
+  // 亚像素级定点精确对齐：杜绝 lroundf 整数舍入导致的 ±0.5px（实地1~2米）几何错位
+  const int32_t backU16 = useBack ? (int32_t)lroundf(((float)(rasX0 - rasterBackHeader.x0) / rasMpp) * 65536.0f) : 0;
+  const int32_t backV16 = useBack ? (int32_t)lroundf(((float)(rasterBackHeader.y0 - rasY0) / rasMpp) * 65536.0f) : 0;
+  const int backU = backU16 >> 16;
+  const int backV = backV16 >> 16;
   const float R = 233.0f;
+  // 快速路径参数（见循环内）：安全边距——有上一块羽化时 32px（羽化带之外），否则 1px
+  const int fMargin = useBack ? 32 : 1;
+  const int fLimU = (int)rasW - 2 * fMargin - 1, fLimV = (int)rasH - 2 * fMargin - 1;
+  const uint8_t *fBuf = rasterBuf;
+  const int fBW = rasBW;
+  const bool fastOK = !rasterViceValid && fBuf && fLimU > 0 && fLimV > 0;
   for (int y = y0; y < y1; y += step) {
     float dyc = y + 0.5f - CX;
     if (RM.pix2 && (y % PIXB) && y > y0 && fabsf(dyc) < R - 2) {  // v6.1 掌机像素：每 3 行只算第一行，其余照抄
@@ -697,7 +734,35 @@ void rasterRows(int y0, int y1, int step) {
         uint8_t idx = sampleRasterIdxSafe(ui, vi, useBack, backU, backV, usedBack);
         col = (usedBack && RM.backHasPal) ? RM.backPal[idx] : pal[idx];
       } else {
-        col = sampleRasterBilinear(U, V, pal, useBack, backU, backV);
+        // 快速路径：2×2 邻域完全在当前块内且离块边足够远（无需上一块羽化）→ 无边界检查，全局量已提到局部
+        int32_t ui = U >> 16, vi = V >> 16;
+        if (fastOK && (uint32_t)(ui - fMargin) < (uint32_t)fLimU && (uint32_t)(vi - fMargin) < (uint32_t)fLimV) {
+          uint32_t k00 = ((uint32_t)((vi >> 4) * fBW + (ui >> 4)) << 8) | ((vi & 15) << 4) | (ui & 15);
+          uint32_t k10 = ((ui & 15) != 15) ? k00 + 1 : k00 + 241;                        // 右：下一块同一行的第 0 列
+          uint32_t k01 = ((vi & 15) != 15) ? k00 + 16 : k00 + (uint32_t)fBW * 256 - 240;  // 下：下一块行的第 0 行
+          uint32_t k11 = ((vi & 15) != 15) ? k10 + 16 : k10 + (uint32_t)fBW * 256 - 240;
+          uint8_t b0 = fBuf[k00 >> 1];
+          uint8_t i00 = (k00 & 1) ? (b0 >> 4) : (b0 & 15);
+          uint8_t b1 = fBuf[k10 >> 1];
+          uint8_t i10 = (k10 & 1) ? (b1 >> 4) : (b1 & 15);
+          uint8_t b2 = fBuf[k01 >> 1];
+          uint8_t i01 = (k01 & 1) ? (b2 >> 4) : (b2 & 15);
+          uint8_t b3 = fBuf[k11 >> 1];
+          uint8_t i11 = (k11 & 1) ? (b3 >> 4) : (b3 & 15);
+          if (i00 == i10 && i00 == i01 && i00 == i11) {
+            col = pal[i00];
+          } else {
+            uint32_t ax = (U >> 11) & 31, ay = (V >> 11) & 31;
+            uint32_t c00 = rasRgbSpread(pal[i00]), c10 = rasRgbSpread(pal[i10]);
+            uint32_t c01 = rasRgbSpread(pal[i01]), c11 = rasRgbSpread(pal[i11]);
+            uint32_t top = ((c00 * (32 - ax) + c10 * ax) >> 5) & 0x07E0F81Fu;
+            uint32_t bot = ((c01 * (32 - ax) + c11 * ax) >> 5) & 0x07E0F81Fu;
+            uint32_t mm  = ((top * (32 - ay) + bot * ay) >> 5) & 0x07E0F81Fu;
+            col = (uint16_t)(mm | (mm >> 16));
+          }
+        } else {
+          col = sampleRasterBilinear(U, V, pal, useBack, backU16, backV16);
+        }
       }
       row[x] = col;
       for (int k = 1; k < xstep && x + k <= xb; k++) row[x + k] = col;
@@ -853,6 +918,9 @@ void drawRasterMap(float cx, float cy, float sc, float cs, float sn) {
     RM.pal[6] = RM.pal[4]; RM.pal[7] = RM.pal[5]; // 保留原绿地类别的屋顶
   }
   RM.backHasPal = rasterBackHasPal;
+#if PERF_LOG
+  if (rasterBackValid && rasterBackHeader.frame == rasterFrame && !rasterViceValid) perf.backFrames++;
+#endif
   if (RM.backHasPal) {
     for (int i = 0; i < 16; i++) RM.backPal[i] = (themeIdx != 0 && nightOn) ? blendF(rasterBackPal[i], C_BLACK, 110) : rasterBackPal[i];
   }
@@ -1332,7 +1400,7 @@ void batPoll() {
   batPct = pct; batChg = chg; usbIn = usb;
   if (mediaHid && changed && pct >= 0 && bleConnected) mediaHid->setBatteryLevel((uint8_t)constrain(pct, 0, 100));
   if (changed) {
-    if (onWaitScreen && page == 0 && !sliding) drawStatus();        // v7.2 只重画状态栏
+    if (onWaitScreen && page == 1 && !sliding) drawSettingsPage();  // 设置界面刷新电池显示
     else if (inNav) navDirty = true;
   }
   if (changed || now - batSentAt > 60000) {
@@ -1394,6 +1462,15 @@ void sendPendingAck() {
     txChar->setValue((uint8_t *)pendingBat.c_str(), pendingBat.length());
     txChar->notify();
     pendingBat = "";
+  }
+  static unsigned long lastZoomSyncAt = 0;
+  if (mapModeActive() && pendingEvt.length() == 0 && (millis() - lastZoomSyncAt > 3500)) {
+    bool macroWanted = (userMapScale < 0.25f);
+    bool macroHave = (rasMpp > 4.0f && rasterValid);
+    if (rasterValid && (macroWanted != macroHave)) {
+      lastZoomSyncAt = millis();
+      pendingEvt = "T,ZOOM," + String((int)lroundf(userMapScale * 100.0f));
+    }
   }
   if (pendingEvt.length()) {                          // v5.2 触摸事件
     txChar->setValue((uint8_t *)pendingEvt.c_str(), pendingEvt.length());
@@ -1565,36 +1642,90 @@ static float smoothAngleDamp(float current, float target, float &currentVelocity
   float x = omega * dt;
   float expFactor = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
 
-  float change = diff;
-  float originalTo = target;
-
+  // 注意符号：Unity SmoothDamp 里 change = current - target（指向"远离目标"）。
+  // 旧实现用了 target - current，导致小 dt 时一步吸到目标、大 dt 时几乎不动，转弯严重滞后。
+  float originalTo = current + diff;                   // 目标（已展开到 current 附近，避免 0/360 回绕）
+  float change = -diff;
   float maxChange = maxSpeed * smoothTime;
   change = constrain(change, -maxChange, maxChange);
-  target = current + change;
+  float tgt = current - change;                        // 被限幅后的临时目标
 
   float temp = (currentVelocity + omega * change) * dt;
   currentVelocity = (currentVelocity - omega * temp) * expFactor;
-  float output = target - change + (change + temp) * expFactor;
+  float output = tgt + (change + temp) * expFactor;
 
-  if ((originalTo - current > 0.0f) == (output > originalTo)) {
+  if ((originalTo - current > 0.0f) == (output > originalTo)) {   // 防过冲
     output = originalTo;
-    currentVelocity = (output - originalTo) / dt;
+    currentVelocity = 0.0f;
   }
-
-  float step = output - current;
-  while (step > 180.0f) step -= 360.0f;
-  while (step < -180.0f) step += 360.0f;
-  // 放宽单帧角步长上限至 12°，彻底解决转弯迟缓、直道横走的问题
-  const float maxFrameAngle = 12.0f;
-  step = constrain(step, -maxFrameAngle, maxFrameAngle);
-  output = current + step;
+  // 不再做每帧固定角度限幅：角速度已由 maxSpeed 控制，帧率低时固定 12°/帧会变成慢速上限。
 
   while (output >= 360.0f) output -= 360.0f;
   while (output < 0.0f) output += 360.0f;
   return output;
 }
 
-// 缩放倍率 HUD 浮层 (双击按住拖拽或微调时显示)
+// 屏幕右侧边缘半透明缩放滑轨与加减图标 (对标音乐播放页音量轨设计)
+void drawMapZoomSlider(uint32_t now) {
+  if (page != 0 || !(inNav || cruiseOn || mapModeActive())) return;
+  if (callOn || pairOn || fxOn || arrivedBannerOn) return;
+
+  uint16_t *fb = gfx->getFramebuffer();
+  if (!fb) return;
+
+  bool isActive = mapZoomActive || (now < mapZoomHintUntil);
+  uint8_t bgAlpha = isActive ? 190 : 100;
+  uint16_t iconColor = isActive ? C_WHITE : 0xCE59; // 活跃时亮白，平时半透明淡灰
+  uint16_t borderCol = isActive ? 0x07E0 : 0x2124; // 活跃时荧光绿边框，平时深灰边框
+
+  const float R_slider = 206.0f; // 紧贴右侧转弯进度环内侧 (R=219)
+  // 加号在上方 70 度，减号在下方 110 度 (3点钟为 90 度)
+  // sin(70°) = 0.9397f, cos(70°) = 0.3420f
+  const int plusX = (int)lroundf(CX + R_slider * 0.9397f);   // ~427
+  const int plusY = (int)lroundf(CX - R_slider * 0.3420f);   // ~163
+  const int minusX = (int)lroundf(CX + R_slider * 0.9397f);  // ~427
+  const int minusY = (int)lroundf(CX + R_slider * 0.3420f);  // ~303
+
+  // 1. 加号 (+) 半透明底座与图标
+  drawTranslucentCircle(plusX, plusY, 13, 0x0000, bgAlpha);
+  gfx->drawCircle(plusX, plusY, 13, borderCol);
+  // 加号十字 (粗 2px)
+  gfx->fillRect(plusX - 4, plusY - 1, 9, 2, iconColor);
+  gfx->fillRect(plusX - 1, plusY - 4, 2, 9, iconColor);
+
+  // 2. 减号 (-) 半透明底座与图标
+  drawTranslucentCircle(minusX, minusY, 13, 0x0000, bgAlpha);
+  gfx->drawCircle(minusX, minusY, 13, borderCol);
+  // 减号横线 (粗 2px)
+  gfx->fillRect(minusX - 4, minusY - 1, 9, 2, iconColor);
+
+  // 3. 弧形滑轨槽 (76° 到 104° 弧段)
+  uint16_t trackCol = isActive ? 0x5AEB : 0x2124;
+  for (int deg = 76; deg <= 104; deg += 3) {
+    float rad = deg * (float)M_PI / 180.0f;
+    int tx = (int)lroundf(CX + R_slider * sinf(rad));
+    int ty = (int)lroundf(CX - R_slider * cosf(rad));
+    gfx->drawPixel(tx, ty, trackCol);
+    gfx->drawPixel(tx + 1, ty, trackCol);
+  }
+
+  // 4. 当前缩放倍率滑块指示点 (Knob)
+  // userMapScale (0.10f ~ 1.00f) 线性映射到 104° (缩小) ~ 76° (放大)
+  float p = constrain((userMapScale - 0.10f) / (1.00f - 0.10f), 0.0f, 1.0f);
+  float knobDeg = 104.0f - p * 28.0f; // 76° ~ 104°
+  float knobRad = knobDeg * (float)M_PI / 180.0f;
+  int kx = (int)lroundf(CX + R_slider * sinf(knobRad));
+  int ky = (int)lroundf(CX - R_slider * cosf(knobRad));
+
+  if (isActive) {
+    gfx->fillCircle(kx, ky, 4, 0x07E0); // 活跃时亮绿实心滑块
+    gfx->drawCircle(kx, ky, 4, C_WHITE);
+  } else {
+    gfx->fillCircle(kx, ky, 3, 0x8410); // 平时低调半透明小滑块
+  }
+}
+
+// 缩放倍率 HUD 浮层 (滑动调节缩放时显示)
 void drawMapZoomHint(uint32_t now) {
   if (now >= mapZoomHintUntil) return;
   int cardW = 140, cardH = 38;
@@ -2683,21 +2814,52 @@ void drawMapFrame() {
   static unsigned long lastViewAt = 0;
   float vdt = lastViewAt ? (t - lastViewAt) / 1000.0f : 0.04f;
   lastViewAt = t;
-  if (vdt > 0.20f) vdt = 0.20f;
+  if (vdt > 0.50f) vdt = 0.50f;                         // 帧间隔用真实值（旧 0.2s 截断会让低帧率时时间推进偏慢）
   if (vdt < 0.005f) vdt = 0.005f;
 
   float prevHdg = viewHdg;
   float hdgDiff = hPred - viewHdg;
   while (hdgDiff > 180.0f) hdgDiff -= 360.0f;
   while (hdgDiff < -180.0f) hdgDiff += 360.0f;
+#if PERF_LOG
+  {
+    static unsigned long perfPrevT = 0;
+    if (perfPrevT) {
+      uint32_t d = (uint32_t)(t - perfPrevT);
+      perf.dtSumMs += d; if (d > perf.dtMaxMs) perf.dtMaxMs = d;
+      if (d > 50) perf.over50++;
+      if (d > 100) perf.over100++;
+    }
+    perfPrevT = t;
+    perf.frames++;
+    if (fabsf(hdgDiff) > perf.hdgErrMax) perf.hdgErrMax = fabsf(hdgDiff);
+    if (fabsf(hdgRate) > perf.hdgRateMax) perf.hdgRateMax = fabsf(hdgRate);
+  }
+#endif
 
   // 动态自适应极速跟转：
   // 1. 转弯机动时（角度差大于 10°）：将 smoothTime 压缩至 0.08 秒，最大角速度提升至 280°/s，车身进入直道前瞬间对齐，决不再出现横着走！
   // 2. 直道巡航微调时（角度差较小）：采用 0.16 秒平滑滤波，消除细微 GPS 抖动
-  float smoothTime = fabsf(hdgDiff) > 10.0f ? 0.08f : 0.16f;
-  float maxTurnSpeed = fabsf(hdgDiff) > 10.0f ? 280.0f : 120.0f;
+  // 参数随角度差连续过渡（5°→25°）：smoothTime 0.16→0.08 秒，最大角速度 120→300°/s，避免在固定阈值处突变
+  float ad = fabsf(hdgDiff);
+  float k = constrain((ad - 5.0f) / 20.0f, 0.0f, 1.0f);
+  float smoothTime = 0.16f - 0.08f * k;
+  float maxTurnSpeed = 120.0f + 180.0f * k;
 
   viewHdg = smoothAngleDamp(viewHdg, hPred, viewHdgVel, smoothTime, maxTurnSpeed, vdt);
+#if PERF_LOG
+  {
+    float st = viewHdg - prevHdg;
+    while (st > 180.0f) st -= 360.0f;
+    while (st < -180.0f) st += 360.0f;
+    float ast = fabsf(st);
+    if (ast > perf.hdgStepMax) perf.hdgStepMax = ast;
+    if (ast >= 11.99f) perf.stepClamp++;
+    float av = ast / vdt;                               // 实际显示角速度（°/s）
+    if (av > perf.hdgVelMax) perf.hdgVelMax = av;
+    if (av > 20.0f) perf.rotFrames++;
+  }
+#endif
   // 转弯动态高频刷新：当视角仍在旋转时主动维持连续渲染，杜绝掉帧与扫描撕裂
   if (fabsf(viewHdgVel) > 0.3f || fabsf(viewHdg - prevHdg) > 0.05f || fabsf(hdgDiff) > 1.0f) {
     navDirty = true;
@@ -2825,12 +2987,12 @@ void drawMapFrame() {
   profMark(9);
   hasCam = saveCam; tripOn = saveTrip;
   drawNavHints(300);                                    // v5.0 重新规划中 / 更快路线 / GPS 信号弱
-  drawBattery(CX - 28, 14, true);                         // 电量（车速上方居中，内嵌电量数字带黑底）
   drawTrafficLightLab(millis());                        // 红绿灯竖排卡片
   profMark(10);
   drawJunctionCrossCard(crossProgress);
-  drawMapZoomHint(t);                                    // 双击缩放提示卡片
-  drawArriveBanner(t);                                   // 到达目的地顶部卡片提示
+  drawMapZoomSlider(t);                                 // 屏幕右侧边缘半透明缩放滑轨与加减图标
+  drawMapZoomHint(t);                                   // 缩放倍率 HUD 浮层
+  drawArriveBanner(t);                                  // 到达目的地顶部卡片提示
   // v2.9 小地图里不画顶部的蓝牙小圆点（会和 N 标记重叠；能收到地图就说明连着）
   needFlush = true;
   mapFrames++;

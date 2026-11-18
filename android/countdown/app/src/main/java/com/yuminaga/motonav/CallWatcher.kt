@@ -135,6 +135,10 @@ object CallWatcher {
                 val t = p.getOrNull(2)?.toIntOrNull() ?: 0
                 ctx?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putInt("map_theme", t)?.apply()
             }
+            "ZOOM" -> {
+                val pct = p.getOrNull(2)?.toIntOrNull() ?: return
+                main.post { MapFeeder.setUserZoom(pct / 100.0) }
+            }
         }
     }
 

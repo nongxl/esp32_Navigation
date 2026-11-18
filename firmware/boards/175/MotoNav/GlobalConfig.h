@@ -166,16 +166,22 @@ void hidMediaTick();
 bool hidMediaReady();
 bool wxDirty = false;                 // v5.3 天气页要重画
 
-// ===== 地图双击拖动缩放控制 =====
-float userMapScale = 1.0f;           // 用户手动设定的基础缩放比例 (默认 1.0x，范围 0.4x ~ 2.5x)
-bool mapZoomActive = false;          // 是否正在双击拖动缩放地图
+// ===== 地图右侧边缘滑动缩放控制 =====
+float userMapScale = 1.0f;           // 用户手动设定的基础缩放比例 (默认 1.0x，范围 0.1x ~ 1.0x)
+bool mapZoomActive = false;          // 是否正在右侧边缘滑动缩放地图
 uint32_t mapZoomHintUntil = 0;       // 缩放提示卡片显示截止时间
-int16_t mapZoomStartX = 0;           // 双击按住时手指初始 X
-int16_t mapZoomStartY = 0;           // 双击按住时手指初始 Y
-float mapZoomStartScale = 1.0f;      // 双击按住时初始基础比例
-uint32_t lastMapTapAt = 0;           // 导航地图上一次轻触松开的时间 (用于双击判定)
+int16_t mapZoomStartX = 0;           // 滑动初始 X
+int16_t mapZoomStartY = 0;           // 滑动初始 Y
+float mapZoomStartScale = 1.0f;      // 滑动初始基础比例
+uint32_t lastMapTapAt = 0;           // 保留兼容
 int16_t lastMapTapX = 0, lastMapTapY = 0;
 unsigned long mapZoomSaveAt = 0;     // 缩放保存到 NVS 的延迟时间
+
+// 手机状态（蓝牙连接后由 App 同步，#BAT,<pct>,<charging>,<sig1>,<sig2>）
+int8_t phoneBatPct = -1;             // 手机电量 0~100，-1 表示未连接/未知
+bool   phoneBatChg = false;          // 手机是否在充电
+int8_t phoneSig1 = -1;               // 卡1信号 0~4 格，-1 表示无卡/未知
+int8_t phoneSig2 = -1;               // 卡2信号 0~4 格，-1 表示未插双卡/无卡
 
 void saveMapZoomIfDue() {
   if (!mapZoomSaveAt || (long)(millis() - mapZoomSaveAt) < 0) return;

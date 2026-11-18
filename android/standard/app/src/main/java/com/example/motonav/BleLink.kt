@@ -573,6 +573,7 @@ object BleLink {
         }
         pump()
         syncScreenClock(true)              // v8.3.24 连上就自动对时（圆屏待机时钟 + 时间显示用）
+        syncPhoneStatus(true)              // 同步手机电量、充电状态与蜂窝信号强度
         CallWatcher.syncDestinations()     // 蓝牙连接就绪时，主动向圆屏同步收藏地址
         MusicBridge.refresh(true)
         syncClock(true)
@@ -612,6 +613,64 @@ object BleLink {
         send("#TIME,$sec," + clockFmt.format(java.util.Date()))
     }
 
+    // ================= 手机电量与信号同步（每 10 分钟一次） =================
+
+    private var lastPhoneStatusSyncAt = 0L
+    private const val PHONE_STATUS_SYNC_MS = 10 * 60 * 1000L    // 10 分钟同步一次
+
+    private fun getSignalStrengths(ctx: Context): Pair<Int, Int> {
+        var s1 = -1
+        var s2 = -1
+        try {
+            val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager ?: return Pair(-1, -1)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                val sm = ctx.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
+                val subs = try {
+                    if (ctx.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        sm?.activeSubscriptionInfoList
+                    } else null
+                } catch (_: Exception) { null }
+
+                if (!subs.isNullOrEmpty()) {
+                    for (i in subs.indices) {
+                        try {
+                            val subTm = tm.createForSubscriptionId(subs[i].subscriptionId)
+                            val lvl = subTm.signalStrength?.level ?: -1
+                            if (i == 0) s1 = lvl
+                            else if (i == 1) s2 = lvl
+                        } catch (_: Exception) {}
+                    }
+                } else {
+                    s1 = tm.signalStrength?.level ?: -1
+                }
+            } else {
+                s1 = tm.signalStrength?.level ?: -1
+            }
+        } catch (_: Throwable) {}
+        return Pair(s1, s2)
+    }
+
+    /** 同步手机电量、充电状态及蜂窝信号强度给圆屏。连接就绪时发一次，之后每 10 分钟同步一次。 */
+    fun syncPhoneStatus(force: Boolean = false) {
+        if (!ready) return
+        val now = now()
+        if (!force && now - lastPhoneStatusSyncAt < PHONE_STATUS_SYNC_MS) return
+        lastPhoneStatusSyncAt = now
+        val ctx = appContext ?: return
+        try {
+            val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+            val bIntent = ctx.registerReceiver(null, filter)
+            val level = bIntent?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = bIntent?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+            val pct = if (level >= 0 && scale > 0) (level * 100 / scale) else -1
+            val status = bIntent?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+            val isChg = if (status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL) 1 else 0
+
+            val (s1, s2) = getSignalStrengths(ctx)
+            send("#BAT,$pct,$isChg,$s1,$s2")
+        } catch (_: Exception) {}
+    }
+
     // ================= 心跳 =================
 
     private val heartbeat = object : Runnable {
@@ -631,6 +690,7 @@ object BleLink {
             val idle = synchronized(lock) { ctrlQueue.isEmpty() && imgQueue.isEmpty() && bulkQ.isEmpty() && inFlight == 0 }
             if (ready && idle && now() - lastWriteAt > HEARTBEAT_MS - 500) send("P")
             syncScreenClock(false)                 // 每小时校准一次圆屏时钟
+            syncPhoneStatus(false)                 // 每十分钟同步一次手机电量与信号
             if (auto) handler.postDelayed(this, HEARTBEAT_MS)
         }
     }

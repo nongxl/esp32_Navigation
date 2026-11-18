@@ -1,0 +1,15 @@
+{
+  "name": "GFX Library for Arduino",
+  "version": "1.6.9",
+  "build": {
+    "srcFilter": [
+      "+<*.cpp>",
+      "-<Arduino_GFX_Library.cpp>",
+      "+<canvas/Arduino_Canvas.cpp>",
+      "+<databus/Arduino_ESP32QSPI.cpp>",
+      "+<databus/Arduino_ESP32SPI.cpp>",
+      "+<display/Arduino_CO5300.cpp>",
+      "+<display/Arduino_ST77916.cpp>"
+    ]
+  }
+}

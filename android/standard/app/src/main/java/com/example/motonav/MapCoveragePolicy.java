@@ -11,20 +11,25 @@ public final class MapCoveragePolicy {
     public static double viewRadius(int kmh, double userZoom) {
         double z = Math.max(0.10, Math.min(1.00, userZoom));
         double speedFactor = Math.max(0.50, Math.min(1.00, 1.0 - Math.max(0, kmh) * 0.0042));
-        // 至少按 0.38 保守视野触发；当圆屏缩放到更小倍率时，进一步提前触发下一块
-        double scale = Math.min(0.38, Math.max(0.20, z * speedFactor));
+        // 结合圆屏实际缩放比例自适应视野，最低支持 0.08 宏观视野覆盖
+        double scale = Math.min(0.50, Math.max(0.08, z * speedFactor));
         return 241.0 / scale;
     }
 
     public static double aheadDistance(int kmh, boolean satellite) {
+        return aheadDistance(kmh, satellite, 1200.0);
+    }
+
+    public static double aheadDistance(int kmh, boolean satellite, double half) {
         if (satellite) {
             return kmh > 5 ? 180.0 : 0.0;
         }
         if (kmh <= 5) return 0.0;
-        if (kmh >= 100) return 920.0;
-        if (kmh >= 80) return 780.0;
-        if (kmh >= 50) return 620.0;
-        return 450.0;
+        double factor = (half > 2000.0) ? 1.5 : 1.0;
+        if (kmh >= 100) return 920.0 * factor;
+        if (kmh >= 80) return 780.0 * factor;
+        if (kmh >= 50) return 620.0 * factor;
+        return 450.0 * factor;
     }
 
     public static boolean shouldRefresh(double dx, double dy, float bearing, int kmh,

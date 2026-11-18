@@ -39,7 +39,8 @@ void touchInit() {
     touchOK = touch.begin(Wire, 0x15, IIC_SDA, IIC_SCL);
   }
   Serial.println(touchOK ? "touch ok" : "touch not found");
-  if (touchOK) attachInterrupt(TP_INT, onTouchIrq, FALLING);   // v5.3
+  // 采用纯定时轮询 CST820，完全不依赖外部 GPIO 硬件中断
+  // 彻底避免断开电脑独立供电时 TP_INT 引脚悬空/杂波引发中断雪崩或 FreeRTOS ipc1 栈溢出崩溃
 }
 
 // 执行上一曲 (在任意界面通用)
@@ -289,10 +290,9 @@ void touchPoll() {
   static bool calibTriggered = false;
   unsigned long now = millis();
   if (!touchOK) return;
-  if (!touchIrq && !touchDown && !callOn) return;
-  if (now - lastPoll < 12) return;
+  // 纯 12ms 定时轮询：无论是否连接电脑、无论中断脚电平如何，均稳定高效响应
+  if (!touchDown && !callOn && (now - lastPoll < 12)) return;
   lastPoll = now;
-  touchIrq = false;
   if (callAnswerSent && now - callAnswerAt > 4000) callAnswerSent = false;   // 4 秒还在响：允许再按一次
   int16_t x[5] = {0}, y[5] = {0};
   uint8_t n = touch.getPoint(x, y, 1);
@@ -319,20 +319,19 @@ void touchPoll() {
       touchVectorToCanvas(tdx0, tdy0);
       int cx0 = (int)lroundf(CX + tdx0);
       int cy0 = (int)lroundf(CX + tdy0);
-      // 导航地图页面：双击按住缩放检测
+      // 导航地图页面：右侧边缘滑动缩放检测 (对标音乐页面的左侧音量轨操作)
       if (page == 0 && (inNav || cruiseOn || mapModeActive()) && !callOn && !pairOn && !fxOn) {
-        // 双击时间窗口放宽至 1200ms；只要在有效触控圆内即可识别为双击
-        float tdx = x[0] - CX, tdy = y[0] - CX;
-        if (lastMapTapAt > 0 && (now - lastMapTapAt <= 1200) && (tdx * tdx + tdy * tdy <= 230.0f * 230.0f)) {
+        float distSq = (float)(cx0 - CX) * (cx0 - CX) + (float)(cy0 - CX) * (cy0 - CX);
+        // 右侧边缘扇区：X 贴近右侧 (cx0 >= CX + 85)，Y 在上下 120 像素以内，半径在弧边带 (140~245)
+        if (cx0 >= (CX + 85) && abs(cy0 - CX) <= 120 && distSq >= 140.0f * 140.0f && distSq <= 245.0f * 245.0f) {
           mapZoomActive = true;
           touchEat = true;
-          mapZoomStartX = x[0];
-          mapZoomStartY = y[0];
+          mapZoomStartX = cx0;
+          mapZoomStartY = cy0;
           mapZoomStartScale = userMapScale;
           mapZoomHintUntil = now + 2500;
-          lastMapTapAt = 0;
-          dragAbort(); // 终止任何残留的换页拖拽状态，确保完全进入缩放模式
-          CompanionMode::startVibration(70, 30);
+          dragAbort(); // 拦截页面拖拽换页
+          CompanionMode::startVibration(50, 20);
         }
       }
       if (page == 2 && !callOn && !pairOn) {
@@ -433,67 +432,60 @@ void touchPoll() {
 
     // 导航/巡航模式下禁用地图页单指长按退出（防止与双击按住缩放手势冲突导致误停导航）
 
-    if (mapZoomActive) {
+    if (page == 0 && mapZoomActive) {
       touchEat = true;
-      float vx = touchX1 - mapZoomStartX;
-      float vy = touchY1 - mapZoomStartY;
-      touchVectorToCanvas(vx, vy);
-      float dy = vy; // 在屏幕画布方向：dy < 0 向上滑放大，dy > 0 向下滑缩小
-      // 采用指数几何缩放曲线，手指滑动平滑均匀，支持 0.1x ~ 1.0x 全范围细腻缩放
-      float scaleFactor = expf(-dy * 0.0055f);
-      float targetScale = constrain(mapZoomStartScale * scaleFactor, 0.10f, 1.00f);
-      // 一阶低通滤波平滑手指微颤与离散报点噪点
-      userMapScale += (targetScale - userMapScale) * 0.45f;
-      mapZoomHintUntil = now + 2000;
-      navDirty = true;
+      float tdx1 = touchX1 - CX, tdy1 = touchY1 - CX;
+      touchVectorToCanvas(tdx1, tdy1);
+      int cy1 = (int)lroundf(CX + tdy1);
+      float dy = (float)(cy1 - mapZoomStartY); // 画布方向：dy < 0 向上滑放大，dy > 0 向下滑缩小
+      
+      // 线性平滑手感：上下滑动行程对应缩放 0.10x ~ 1.00x
+      float targetScale = constrain(mapZoomStartScale - dy * 0.0065f, 0.10f, 1.00f);
+      if (fabsf(targetScale - userMapScale) >= 0.008f) {
+        userMapScale += (targetScale - userMapScale) * 0.55f;
+        mapZoomHintUntil = now + 2000;
+        navDirty = true;
+      }
     }
 
     if (callOn || pairOn || touchEat || fxOn || mapZoomActive) dragAbort();
     else {
-      // 导航模式下：在双击等待窗口期（1200ms）或处于地图缩放模式下，绝对禁止切页拖拽！
-      bool inMap = (page == 0 && (inNav || cruiseOn || mapModeActive()));
-      if (inMap && lastMapTapAt > 0 && (now - lastMapTapAt <= 1200)) {
-        // 处于第 1 次轻触后的等待双击窗口期：不触发换页拖动，保障双击操作
-      } else {
-        dragMove(touchX1 - touchX0, touchY1 - touchY0, now);
-      }
+      dragMove(touchX1 - touchX0, touchY1 - touchY0, now);
     }
   } else if (touchDown && now - touchLastSeen > 70) {
     touchDown = false;
     unsigned long pressDuration = now - touchHoldAt;
     touchHoldAt = 0;
     calibTriggered = false;
-    if (mapZoomActive) {
+    if (page == 0 && mapZoomActive) {
       mapZoomActive = false;
       touchEat = true;
       mapZoomSaveAt = now + 1500;
       mapZoomHintUntil = now + 2000;
-      float dragDist = hypotf((float)(touchX1 - mapZoomStartX), (float)(touchY1 - mapZoomStartY));
-      // 快速双击步进缩放：放宽位移门槛至 110 像素、时长 800ms，彻底适应快/慢双击与手套颠簸
-      if (pressDuration < 800 && dragDist < 110.0f) {
-        float cur = userMapScale;
-        float nextScale = 0.70f;
-        if (cur < 0.30f) nextScale = 0.40f;
-        else if (cur < 0.60f) nextScale = 0.70f;
-        else if (cur < 0.90f) nextScale = 1.00f;
-        else nextScale = 0.20f;
-        userMapScale = nextScale;
+
+      float tdx0 = touchX0 - CX, tdy0 = touchY0 - CX;
+      touchVectorToCanvas(tdx0, tdy0);
+      int cy0 = (int)lroundf(CX + tdy0);
+
+      float tdx1 = touchX1 - CX, tdy1 = touchY1 - CX;
+      touchVectorToCanvas(tdx1, tdy1);
+      int cy1 = (int)lroundf(CX + tdy1);
+
+      float dragDist = hypotf((float)(touchX1 - touchX0), (float)(touchY1 - touchY0));
+
+      // 若只是轻触一下右侧区域（按压时间短且位移小：< 450ms, dist < 30px），支持轻点 + / - 单步步进调节！
+      if (pressDuration < 450 && dragDist < 30.0f) {
+        if (cy0 < CX) {
+          // 点在加号附近 (上半区)：放大 0.1x
+          userMapScale = min(1.00f, userMapScale + 0.10f);
+        } else {
+          // 点在减号附近 (下半区)：缩小 0.1x
+          userMapScale = max(0.10f, userMapScale - 0.10f);
+        }
       }
-      CompanionMode::startVibration(90, 35);
+      CompanionMode::startVibration(70, 25);
       if (bleConnected) pendingEvt = "T,ZOOM," + String((int)lroundf(userMapScale * 100.0f));
       navDirty = true;
-    } else if (page == 0 && (inNav || cruiseOn || mapModeActive()) && !callOn && !pairOn && !fxOn) {
-      float vx = touchX1 - touchX0, vy = touchY1 - touchY0;
-      touchVectorToCanvas(vx, vy);
-      // 放宽轻触判定：不设最短按压下限（快双击必中），按压时长放宽至 800ms，位移容差放宽至 130 像素
-      if (pressDuration < 800 && abs(vx) <= 130 && abs(vy) <= 130) {
-        lastMapTapAt = now;
-        lastMapTapX = touchX0;
-        lastMapTapY = touchY0;
-        dragAbort();     // 若轻触期间微移曾触发 dragging，彻底终止，防止抬手触发 dragEnd 换页动画！
-        touchEat = true; // 拦截后续 dragEnd 处理
-        CompanionMode::startVibration(55, 20); // 触控反馈：第 1 击捕获成功
-      }
     }
     if (page == 2 && volSliding) {
       volSliding = false;

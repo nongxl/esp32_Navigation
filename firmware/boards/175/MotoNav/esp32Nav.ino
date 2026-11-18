@@ -414,7 +414,7 @@ void setup() {
     bootBrand = BootAnimation::valid(pr.getInt("bootbrand", 0));
     destLoadFromNvs();
     hidMusicMode = pr.getBool("mediahid", false);
-    fastFlushOn = pr.getBool("fastf", true);
+    fastFlushOn = true;                                             // 强制开启快速推屏
     themeIdx = pr.getInt("maptheme", 1);
     if (themeIdx < 0 || themeIdx >= THEME_N) themeIdx = 1;
     userMapScale = pr.getFloat("mapzoom", 0.7f);

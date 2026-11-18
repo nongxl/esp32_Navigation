@@ -4,6 +4,176 @@
 #include "UiModern.h"
 #include "LeanAngleMeter.h"
 
+// 电量与手机状态全局引用
+extern int batPct;
+extern bool batChg;
+extern int8_t phoneBatPct;
+extern bool   phoneBatChg;
+extern int8_t phoneSig1;
+extern int8_t phoneSig2;
+extern volatile bool bleConnected;
+extern volatile bool bleAuthed;
+
+// 绘制圆屏立式电池图标 (正常电池样式，内嵌电量数字与充电闪电)
+static void drawVerticalWatchBattery(int cx, int cy, int pct, bool chg) {
+  if (pct < 0) return;
+  const int BW = 30, BH = 44, capW = 10, capH = 3;
+  int x0 = cx - BW / 2;
+  int y0 = cy - BH / 2 + 2;
+
+  const uint16_t C_VICE_PARK_GREEN = 0x760D;
+  const uint16_t C_VICE_WATER_AQUA = 0x4E3B;
+  uint16_t c = chg ? C_VICE_WATER_AQUA : pct > 50 ? C_VICE_PARK_GREEN : pct >= 20 ? 0xFD80 : 0xF9C6;
+  if (!chg && pct < 10 && (millis() / 600) % 2) c = 0x4208;
+
+  // 正极凸起 (顶部中央)
+  gfx->fillRoundRect(cx - capW / 2, y0 - capH, capW, capH + 1, 2, c);
+
+  // 电池外框与纯黑底
+  gfx->drawRoundRect(x0, y0, BW, BH, 4, c);
+  gfx->drawRoundRect(x0 + 1, y0 + 1, BW - 2, BH - 2, 3, c);
+  gfx->fillRect(x0 + 2, y0 + 2, BW - 4, BH - 4, C_BLACK);
+
+  // 垂直由下往上填充电量柱
+  int innerW = BW - 4;
+  int innerH = BH - 4;
+  int fh = innerH * constrain(pct, 0, 100) / 100;
+  if (fh > 0) {
+    gfx->fillRect(x0 + 2, y0 + 2 + innerH - fh, innerW, fh, c);
+  }
+
+  // 充电闪电或内嵌居中电量数字
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d", constrain(pct, 0, 100));
+  if (chg) {
+    int boltX = cx, boltY = y0 + 10;
+    gfx->fillTriangle(boltX + 1, boltY - 4, boltX - 3, boltY, boltX, boltY, C_WHITE);
+    gfx->fillTriangle(boltX - 1, boltY + 4, boltX + 3, boltY, boltX, boltY, C_WHITE);
+    drawAaString((float)cx, (float)(y0 + 24), buf, 1.35f, 0.8f, 8.5f, C_WHITE, true);
+  } else {
+    drawAaString((float)cx, (float)(cy + 2), buf, 1.45f, 0.85f, 9.5f, C_WHITE, true);
+  }
+
+  // 下方微标标签
+  drawAaString((float)cx, (float)(y0 + BH + 9), "SCREEN", 1.15f, 0.7f, 7.5f, 0x7BEF, true);
+}
+
+// 绘制非智能机时代有天线的经典复古手机外形电池图标 (突出天线、微型听筒、液晶屏幕电量、实体按键区)
+static void drawVerticalPhoneBattery(int cx, int cy, int pct, bool chg) {
+  if (pct < 0) return;
+  const int PW = 30, PH = 44;
+  int x0 = cx - PW / 2;
+  int y0 = cy - PH / 2 + 2; // y0 = cy - 20, 底部在 y0 + PH = cy + 24，与圆屏电池底部平齐
+
+  const uint16_t C_VICE_PARK_GREEN = 0x760D;
+  const uint16_t C_VICE_WATER_AQUA = 0x4E3B;
+  uint16_t c = chg ? C_VICE_WATER_AQUA : pct > 50 ? C_VICE_PARK_GREEN : pct >= 20 ? 0xFD80 : 0xF9C6;
+  if (!chg && pct < 10 && (millis() / 600) % 2) c = 0x4208;
+
+  // 1. 经典复古手机突出式外部天线 (位于机身左上方)
+  // 天线柱 (宽 3，高 9，从 y0 - 8 到 y0 + 1)
+  gfx->fillRoundRect(x0 + 4, y0 - 8, 3, 9, 1, 0x64BD);
+  // 天线顶端圆角护帽 (宽 5，高 3，极具老天线特质)
+  gfx->fillRoundRect(x0 + 3, y0 - 9, 5, 3, 1, 0x9CD3);
+
+  // 2. 老手机机身外壳轮廓 (圆角机身，经典硬朗科技感)
+  gfx->drawRoundRect(x0, y0, PW, PH, 4, 0x5AEB);
+  gfx->drawRoundRect(x0 + 1, y0 + 1, PW - 2, PH - 2, 3, 0x2124);
+  gfx->fillRect(x0 + 2, y0 + 2, PW - 4, PH - 4, C_BLACK);
+
+  // 3. 顶部微型听筒槽
+  gfx->fillRoundRect(cx - 3, y0 + 3, 6, 2, 1, 0x5AEB);
+
+  // 4. 中部方形液晶屏幕显示区 (内嵌电量柱和百分比)
+  int sw = PW - 6; // 24
+  int sh = 23;     // 高度 23
+  int sx = cx - sw / 2;
+  int sy = y0 + 7;
+  gfx->drawRect(sx - 1, sy - 1, sw + 2, sh + 2, 0x31A6);
+
+  int fh = sh * constrain(pct, 0, 100) / 100;
+  if (fh > 0) {
+    gfx->fillRect(sx, sy + sh - fh, sw, fh, c);
+  }
+
+  // 充电闪电或内嵌居中电量数字
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d", constrain(pct, 0, 100));
+  if (chg) {
+    int boltX = cx, boltY = sy + 6;
+    gfx->fillTriangle(boltX + 1, boltY - 4, boltX - 3, boltY, boltX, boltY, C_WHITE);
+    gfx->fillTriangle(boltX - 1, boltY + 4, boltX + 3, boltY, boltX, boltY, C_WHITE);
+    drawAaString((float)cx, (float)(sy + 17), buf, 1.30f, 0.75f, 8.0f, C_WHITE, true);
+  } else {
+    drawAaString((float)cx, (float)(sy + sh / 2 + 1), buf, 1.40f, 0.85f, 9.0f, C_WHITE, true);
+  }
+
+  // 5. 机身下方经典实体按键区 (功能键与数字键盘微孔横向点阵)
+  int ky = sy + sh + 3; // y0 + 33
+  // 经典导航中键与左右功能键
+  gfx->drawRoundRect(cx - 3, ky, 6, 3, 1, 0x5AEB);
+  gfx->drawLine(cx - 9, ky + 1, cx - 6, ky + 1, 0x4A69);
+  gfx->drawLine(cx + 6, ky + 1, cx + 9, ky + 1, 0x4A69);
+  // 下方键盘微孔点
+  gfx->fillRect(cx - 8, ky + 5, 2, 2, 0x39E7);
+  gfx->fillRect(cx - 1, ky + 5, 2, 2, 0x39E7);
+  gfx->fillRect(cx + 6, ky + 5, 2, 2, 0x39E7);
+
+  // 6. 下方微标标签 (与圆屏电池 SCREEN 对齐在 y0 + PH + 9 = cy + 33)
+  drawAaString((float)cx, (float)(y0 + PH + 9), "PHONE", 1.15f, 0.7f, 7.5f, 0x7BEF, true);
+}
+
+// 绘制手机信号图标 (支持单卡 4 阶信号柱，或双卡双信号柱并排)
+static void drawPhoneSignalIcon(int cx, int cy, int sig1, int sig2) {
+  if (sig1 < 0 && sig2 < 0) return;
+
+  const int baseY = cy + 24; // 与电池底部 (cy + 24) 严密对齐
+
+  if (sig2 < 0) {
+    // --- 单卡模式 (4 级经典递增梯级蜂窝柱) ---
+    const int barW = 3, gap = 2;
+    const int heights[4] = {6, 12, 18, 24};
+    int totalW = 4 * barW + 3 * gap; // 18px
+    int startX = cx - totalW / 2;
+
+    for (int i = 0; i < 4; i++) {
+      int h = heights[i];
+      int bx = startX + i * (barW + gap);
+      int by = baseY - h;
+      uint16_t col = (sig1 > i) ? C_WHITE : 0x2124;
+      gfx->fillRoundRect(bx, by, barW, h, 1, col);
+    }
+    drawAaString((float)cx, (float)(cy + 33), "CELL", 1.15f, 0.7f, 7.5f, 0x7BEF, true);
+  } else {
+    // --- 双卡模式 (两组紧凑信号柱，分别标 1 和 2) ---
+    const int barW = 2, gap = 1;
+    const int heights[4] = {5, 9, 14, 19};
+    int simW = 4 * barW + 3 * gap; // 11px
+
+    // 卡 1 (左侧)
+    int startX1 = cx - simW - 3;
+    for (int i = 0; i < 4; i++) {
+      int h = heights[i];
+      int bx = startX1 + i * (barW + gap);
+      uint16_t col = (sig1 > i) ? C_WHITE : 0x2124;
+      gfx->fillRoundRect(bx, baseY - h, barW, h, 1, col);
+    }
+    drawAaString((float)(startX1 + simW / 2), (float)(baseY - 22), "1", 0.95f, 0.6f, 6.5f, 0x760D, true);
+
+    // 卡 2 (右侧)
+    int startX2 = cx + 3;
+    for (int i = 0; i < 4; i++) {
+      int h = heights[i];
+      int bx = startX2 + i * (barW + gap);
+      uint16_t col = (sig2 > i) ? C_WHITE : 0x2124;
+      gfx->fillRoundRect(bx, baseY - h, barW, h, 1, col);
+    }
+    drawAaString((float)(startX2 + simW / 2), (float)(baseY - 22), "2", 0.95f, 0.6f, 6.5f, 0x760D, true);
+
+    drawAaString((float)cx, (float)(cy + 33), "DUAL", 1.15f, 0.7f, 7.5f, 0x7BEF, true);
+  }
+}
+
 // 设置项全局状态
 extern int qspiMHz;
 extern int screenRot;
@@ -142,15 +312,33 @@ void drawRotationCalibPage() {
   drawSettingsIcon(3, rightX + cardW / 2, botY + 26, 0xDEFB);
   drawAaString(rightX + cardW / 2, botY + 54, "AUTO SLEEP", 1.3f, 0.8f, 9.0f, 0x8C71, true);
 
-  // 2. 纯白基准十字线（白色水平线直径 + 垂直地面垂线半径，90 度垂直相交）
-  // 横跨屏幕的水平基准线：长度 466px，贯穿正中心 Y = CX，纯白色，线宽 2px
-  gfx->fillRect(0, CX - 1, LCD_WIDTH, 2, C_WHITE);
+  // 2. 纯白基准十字/T字线（根据当前平滑重力角度计算旋转端点并动态绘制，水平地平线 + 重力铅垂线）
+  float rad = autoRotAngleSmoothed * (float)M_PI / 180.0f;
+  float cosA = cosf(rad), sinA = sinf(rad);
 
-  // 垂直地面的线：长度 233px，从中心 (CX, CX) 垂直延伸至屏幕底部，纯白色，线宽 2px
-  gfx->fillRect(CX - 1, CX, 2, CX, C_WHITE);
+  // 水平地平基准线：贯穿屏幕中心
+  float hx0 = (float)CX - (float)CX * cosA;
+  float hy0 = (float)CX - (float)CX * sinA;
+  float hx1 = (float)CX + (float)CX * cosA;
+  float hy1 = (float)CX + (float)CX * sinA;
+  float hnx = -sinA, hny = cosA;
+  gfx->drawLine((int)lroundf(hx0 - hnx), (int)lroundf(hy0 - hny), (int)lroundf(hx1 - hnx), (int)lroundf(hy1 - hny), C_WHITE);
+  gfx->drawLine((int)lroundf(hx0), (int)lroundf(hy0), (int)lroundf(hx1), (int)lroundf(hy1), C_WHITE);
+  gfx->drawLine((int)lroundf(hx0 + hnx), (int)lroundf(hy0 + hny), (int)lroundf(hx1 + hnx), (int)lroundf(hy1 + hny), C_WHITE);
+
+  // 垂直地面的铅垂线：从中心垂直指向重力下方
+  float vx1 = (float)CX - (float)CX * sinA;
+  float vy1 = (float)CX + (float)CX * cosA;
+  float vnx = cosA, vny = sinA;
+  gfx->drawLine((int)lroundf((float)CX - vnx), (int)lroundf((float)CX - vny), (int)lroundf(vx1 - vnx), (int)lroundf(vy1 - vny), C_WHITE);
+  gfx->drawLine(CX, CX, (int)lroundf(vx1), (int)lroundf(vy1), C_WHITE);
+  gfx->drawLine((int)lroundf((float)CX + vnx), (int)lroundf((float)CX + vny), (int)lroundf(vx1 + vnx), (int)lroundf(vy1 + vny), C_WHITE);
+
+  // 垂线末端指示小圆点
+  aaDisc(vx1, vy1, 3.5f, C_WHITE);
 
   // 中心相交点纯白精致圆点
-  aaDisc((float)CX, (float)CX, 4.5f, C_WHITE);
+  aaDisc((float)CX, (float)CX, 5.0f, C_WHITE);
   aaDisc((float)CX, (float)CX, 2.0f, C_BLACK);
 
   // 3. 旋转角度数字显示：在水平线中间上方（纯白色大号抗锯齿平滑字体，带高对比半透明黑色底衬）
@@ -214,8 +402,6 @@ inline void settingsUpdateAutoRot() {
     while (autoRotAngleSmoothed >= 360.0f) autoRotAngleSmoothed -= 360.0f;
     while (autoRotAngleSmoothed < 0.0f) autoRotAngleSmoothed += 360.0f;
 
-    // 浮点连续旋转推屏，彻底消除整数阶梯卡顿
-    setScreenDegFloat(autoRotAngleSmoothed, false);
     drawRotationCalibPage();
   }
 }
@@ -309,11 +495,24 @@ void drawSettingsPage() {
     }
   }
 
-  // 4. 底部极简操作提示
-  if (isChineseLang) {
-    drawTextUTF8Center(CX, 388, "轻触卡片切换设置", 0x632C);
+  // 4. 设置界面下方状态区：圆屏电池、手机形状电池、手机信号图标依次水平排列
+  const int iconCY = 368;
+  bool hasPhone = bleConnected && (phoneBatPct >= 0);
+  bool hasSignal = (phoneSig1 >= 0 || phoneSig2 >= 0);
+
+  if (hasPhone) {
+    if (hasSignal) {
+      // 顺序依次为：圆屏电池图标、手机电池图标、手机信号图标
+      drawVerticalWatchBattery(CX - 84, iconCY, batPct, batChg);
+      drawVerticalPhoneBattery(CX, iconCY, phoneBatPct, phoneBatChg);
+      drawPhoneSignalIcon(CX + 84, iconCY, phoneSig1, phoneSig2);
+    } else {
+      drawVerticalWatchBattery(CX - 44, iconCY, batPct, batChg);
+      drawVerticalPhoneBattery(CX + 44, iconCY, phoneBatPct, phoneBatChg);
+    }
   } else {
-    drawAaString(CX, 386, "TAP CARD TO CONFIGURE", 1.2f, 0.75f, 8.5f, 0x632C, true);
+    // 未连接蓝牙或无手机数据时：圆屏电池单独居中显示
+    drawVerticalWatchBattery(CX, iconCY, batPct, batChg);
   }
 
   // 5. 底部页面指示点
@@ -333,6 +532,7 @@ void settingsPageTap(int x, int y) {
     setScreenDeg(finalDeg, true);
     CompanionMode::startVibration(70, 30);
     drawSettingsPage();
+    needFlush = true;
     return;
   }
 
@@ -397,6 +597,7 @@ void settingsPageTap(int x, int y) {
       settingsAutoRot = true;
       autoRotAngleSmoothed = (float)screenDeg;
       lastAutoRotCheck = 0;
+      setScreenDeg(0, false); // 校准模式下推屏保持基准正向，由 T 字参考线随动旋转指示重力
       drawRotationCalibPage();
       return;
     }

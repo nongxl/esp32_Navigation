@@ -31,12 +31,18 @@ import kotlin.math.sqrt
  */
 object MapFeeder {
     private const val PREFS = "motonav"
-    private const val HALF = 1200.0            // 地图块半边长（米）
+    private const val HALF = 1200.0            // 标准精细地图块半边长（米，覆盖 2.4km x 2.4km，2米/像素）
+    private const val MACRO_HALF = 3600.0      // 宏观大视野地图块半边长（米，覆盖 7.2km x 7.2km，6米/像素，适配 0.1x~0.2x）
     private const val REFRESH = 650.0          // 离地图块中心超过这个距离就准备下一块
     private const val AHEAD = 450.0            // 新地图块中心往前方偏移，前面的路多下载一些
     const val MAX_BYTES = 190_000              // 圆屏地图缓冲 200KB，留余量
     const val MAX_FEAT = 7000
-    private const val RESEND_MS = 8000L
+    private const val RESEND_MS = 4500L
+
+    fun desiredHalf(z: Double, sat: Boolean): Double {
+        if (sat) return SAT_HALF
+        return if (z < 0.25) MACRO_HALF else HALF
+    }
 
     const val TYPE_CHUNK = 1
     const val TYPE_ROUTE = 2
@@ -97,6 +103,52 @@ object MapFeeder {
     // 当前地图块
     private var chunkCx = 0.0
     private var chunkCy = 0.0
+    @Volatile var userZoom = 0.70
+        private set
+    @Volatile private var pendingZoomFetch = false
+    private var nackCount = 0
+
+    // 蓝牙地图块传输与带宽统计（用于评估压缩率、实测吞吐与高速切块冗余）
+    private var bleTxChunks = 0
+    private var bleAckChunks = 0
+    private var bleNackChunks = 0
+    private var bleResendChunks = 0
+    private var bleTotalWireBytes = 0L
+    private var bleTotalPlainBytes = 0L
+    private var bleTotalDeliveryMs = 0L
+    private var lastPlainBytes = 0
+    private var lastDeliveryMs = 0L
+    private var lastThroughputKBps = 0.0
+    private var lastPackMode = ""
+
+    fun setUserZoom(z: Double) {
+        val oldHalf = desiredHalf(userZoom, satMode())
+        userZoom = z.coerceIn(0.10, 1.00)
+        val newHalf = desiredHalf(userZoom, satMode())
+        if (!enabled || routeOnly() || satMode()) return
+
+        // 缩放跨越了精细/宏观门限（例如由 0.7x 缩小至 0.2x/0.1x，或由 0.1x 放大回 0.7x）：
+        // 无论当前车辆是否在行驶，只要跨越门限立即标记并尽速拉取对应层级的底图填补视野！
+        if (newHalf != oldHalf) {
+            pendingZoomFetch = true
+            triggerPendingZoomFetchIfReady()
+        }
+    }
+
+    private fun triggerPendingZoomFetchIfReady() {
+        if (!pendingZoomFetch || !havePose || frame == null) return
+        handler.post {
+            if (!pendingZoomFetch || !havePose || frame == null) return@post
+            if (!fetching && (!haveChunk || chunkAcked)) {
+                val f = frame ?: return@post
+                val targetHalf = desiredHalf(userZoom, satMode())
+                pendingZoomFetch = false
+                status = if (targetHalf > HALF) "切换到 7.2km 宏观大视野底图…" else "切换到标准精细底图…"
+                fetchChunk(f, poseX, poseY)
+            }
+        }
+    }
+
     private var haveChunk = false
     @Volatile private var fetching = false
     @Volatile private var capturing = false
@@ -461,18 +513,22 @@ object MapFeeder {
         if (offline!=null) {
             routeProgress=offline.plan.progress(x,y,routeProgress)
             val onRoute=offline.plan.at(routeProgress)
-            val index=offline.plan.target(routeProgress,!haveConfirmedChunk || kmh<4)
+            val index=offline.plan.target(routeProgress,!haveConfirmedChunk || kmh<4,kmh,userZoom)
             offline.update(index)
             if (kotlin.math.hypot(x-onRoute.x,y-onRoute.y)<400) target=offline.plan.nodes[index]
         }
-        val wanted=target
-        val needs=if (wanted!=null) !haveChunk || chunkType!=TYPE_RASTER ||
+        val wantedHalf = desiredHalf(userZoom, sat)
+        // 宏观大视野（0.1x~0.2x）按车辆当前视野全局对称截取覆盖，不锁死在 2.4km 路线离线节点
+        val wanted = if (wantedHalf <= HALF) target else null
+        val levelMismatch = haveChunk && (chunkType == TYPE_RASTER) && (kotlin.math.abs(chunkHalf - wantedHalf) > 100)
+        val needs=levelMismatch || (if (wanted!=null) !haveChunk || chunkType!=TYPE_RASTER ||
             kotlin.math.abs(wanted.x-chunkCx)>1 || kotlin.math.abs(wanted.y-chunkCy)>1
-            else !haveChunk || MapCoveragePolicy.shouldRefresh(x-cx,y-cy,bearing,kmh,sat,basePreparationSeconds(),half)
+            else !haveChunk || MapCoveragePolicy.shouldRefresh(x-cx,y-cy,bearing,kmh,sat,basePreparationSeconds(),half,userZoom))
+        if (pendingZoomFetch) triggerPendingZoomFetchIfReady()
         // 已发出的普通图必须完整确认；下载后续地图不能冲掉正在传输的数据。
         if (!fetching && (!haveChunk || chunkAcked) && needs && (lastFetchFail==0L || now()-lastFetchFail>5000)) {
             val a=Math.toRadians(bearing.toDouble())
-            val ahead=if (kmh>5) (if (satMode()) SAT_AHEAD else AHEAD) else 0.0
+            val ahead=MapCoveragePolicy.aheadDistance(kmh, satMode(), wantedHalf)
             fetchChunk(f,wanted?.x ?: (x+sin(a)*ahead),wanted?.y ?: (y+cos(a)*ahead),wanted)
         }
         checkResend()
@@ -493,7 +549,7 @@ object MapFeeder {
         val c = ctx
         val sat = satMode()
         val style = theme
-        val rasterHalf = HALF
+        val rasterHalf = desiredHalf(userZoom, sat)
         val offline=offlineMaps
         val knownBuildings=if(src==SRC_AMAP && buildingMode() && !chunkSat)chunkBytes else null
         worker.execute {
@@ -522,13 +578,14 @@ object MapFeeder {
             // 1. 高德普通底图
             if (serial == requestSerial && !routeOnly() && bytes == null && src == SRC_AMAP && c != null && !sat) {
                 try {
-                    val cached=if (offlineNode!=null) offline?.read(offlineNode) ?: offline?.readBase(offlineNode) else null
+                    val cached=if (offlineNode!=null && rasterHalf <= HALF) offline?.read(offlineNode) ?: offline?.readBase(offlineNode) else null
                     val r = if (cached!=null) RasterResult(cached,0,0,null,null) else {
                         capturing = true
                         try {
+                            val allowBld = buildingMode() && rasterHalf <= HALF
                             AmapSdkRaster.build(f,reqCx,reqCy,rasterHalf,makePreview=true,
-                                shouldCancel={ serial!=requestSerial },includeBuildings=buildingMode(),style=style,
-                                onBaseReady=if (buildingMode()) { baseBytesRaw ->
+                                shouldCancel={ serial!=requestSerial },includeBuildings=allowBld,style=style,
+                                onBaseReady=if (allowBld) { baseBytesRaw ->
                                     earlyBaseSent = true
                                     val carriedBase = BuildingContinuity.merge(baseBytesRaw, knownBuildings)
                                     val baseBytes = carriedBase.bytes
@@ -544,7 +601,9 @@ object MapFeeder {
                                         chunkBaseBytes = baseBytes; chunkBytes = baseBytes
                                         chunkBuildingsComplete = carriedBase.complete
                                         chunkId = (chunkId + 1) and 0xFF; chunkAcked = false
-                                        chunkInfo = "地图块 #$chunkId：${themeName(style)} · 高德普通底图，${baseBytes.size / 1024} KB，覆盖 2.4 公里，2 米/像素" + (if(carriedBase.retained>0) "（保留重叠楼块）" else "")
+                                        val kmStr = "%.1f".format(rasterHalf * 2 / 1000.0)
+                                        val mppStr = if (rasterHalf > HALF) "6" else "2"
+                                        chunkInfo = "地图块 #$chunkId：${themeName(style)} · 高德普通底图，${baseBytes.size / 1024} KB，覆盖 ${kmStr} 公里，${mppStr} 米/像素" + (if(carriedBase.retained>0) "（保留重叠楼块）" else "")
                                         status = "普通底图已生成，正在传到圆屏"
                                         sendChunk()
                                     }
@@ -555,6 +614,8 @@ object MapFeeder {
                     }
                     // 缓存只保存这块真正完整的取图；旧楼块拼到普通图不冒充完成。
                     if (offlineNode!=null && cached==null) try { offline?.store(offlineNode,r.bytes) } catch (_: Exception) { }
+                    val kmStr = "%.1f".format(rasterHalf * 2 / 1000.0)
+                    val mppStr = if (rasterHalf > HALF) "6" else "2"
                     if (earlyBaseSent) {
                         val fullBytes = r.bytes
                         if (r.previewRaw!=null) { previewRaw = r.previewRaw; previewCls = r.previewCls; previewVer++ }
@@ -566,7 +627,7 @@ object MapFeeder {
                                 if (chunkAcked) {
                                     chunkBytes = fullBytes
                                     chunkId = (chunkId + 1) and 0xFF; chunkAcked = false
-                                    chunkInfo = "地图块 #$chunkId：${themeName(style)} · 高德楼块底图，${fullBytes.size / 1024} KB，覆盖 2.4 公里，2 米/像素"
+                                    chunkInfo = "地图块 #$chunkId：${themeName(style)} · 高德楼块底图，${fullBytes.size / 1024} KB，覆盖 ${kmStr} 公里，${mppStr} 米/像素"
                                     status = "楼块底图已生成，正在增量同步到圆屏"
                                     sendChunk()
                                 } else {
@@ -575,7 +636,7 @@ object MapFeeder {
                             }
                         }
                     } else {
-                        val carried=if(src==SRC_AMAP && buildingMode())BuildingContinuity.merge(r.bytes,knownBuildings)else null
+                        val carried=if(src==SRC_AMAP && buildingMode() && rasterHalf <= HALF)BuildingContinuity.merge(r.bytes,knownBuildings)else null
                         val base=carried?.bytes ?: r.bytes
                         preparedBase = base
                         val buildSeconds = (now() - startedAt) / 1000.0
@@ -589,7 +650,7 @@ object MapFeeder {
                             chunkBaseBytes = base; chunkBytes = base
                             chunkBuildingsComplete=carried?.complete ?: RasterPacket.isBuilding(base)
                             chunkId = (chunkId + 1) and 0xFF; chunkAcked = false
-                            chunkInfo = "地图块 #$chunkId：${themeName(style)} · 高德${if(chunkBuildingsComplete) "楼块底图" else "普通底图"}，${base.size / 1024} KB，覆盖 2.4 公里，2 米/像素" + (if (cached!=null) "（离线包）" else "") + (if((carried?.retained ?: 0)>0) "（保留重叠楼块）" else "")
+                            chunkInfo = "地图块 #$chunkId：${themeName(style)} · 高德${if(chunkBuildingsComplete) "楼块底图" else "普通底图"}，${base.size / 1024} KB，覆盖 ${kmStr} 公里，${mppStr} 米/像素" + (if (cached!=null) "（离线包）" else "") + (if((carried?.retained ?: 0)>0) "（保留重叠楼块）" else "")
                             status = "普通底图已生成，正在传到圆屏"
                             sendChunk()
                         }
@@ -614,6 +675,9 @@ object MapFeeder {
                 if (b == null) {
                     lastFetchFail = now()
                     status = "地图下载失败（5 秒后重试）：$err"
+                    if (pendingZoomFetch) {
+                        handler.postDelayed({ triggerPendingZoomFetchIfReady() }, 5200)
+                    }
                     return@post
                 }
                 haveChunk = true
@@ -626,7 +690,7 @@ object MapFeeder {
                 chunkBuildingsComplete=false
                 baseBuildSeconds = ((now() - startedAt) / 1000.0).coerceIn(0.2, 60.0)
                 chunkType = type
-                chunkHalf = if (chunkSat) SAT_HALF else HALF
+                chunkHalf = if (chunkSat) SAT_HALF else rasterHalf
                 chunkAcked = false
                 status = "地图已下载" + (if (err.isNotEmpty()) "（$err）" else "")
                 chunkInfo = "地图块 #$chunkId：$info"
@@ -649,8 +713,18 @@ object MapFeeder {
         val wire = if (chunkType == TYPE_RASTER) {
             RasterPacket.forWire(plain, if (haveConfirmedChunk && !confirmedSat && !chunkSat) confirmedRasterBytes else null, buildingMode(), BleLink.zmapSupported)
         } else plain
+        lastPlainBytes = plain.size
         lastWireBytes = wire.size
+        bleTxChunks++
+        bleTotalPlainBytes += plain.size
+        bleTotalWireBytes += wire.size
+        lastPackMode = when {
+            wire.size < plain.size / 2 -> "压缩/差分"
+            wire.size < plain.size -> "压缩"
+            else -> "全量"
+        }
         BleLink.sendBulk(chunkType, chunkId, wire)
+        android.util.Log.i("MotoNavBleStats", "TX #$chunkId mode=$lastPackMode wire=${wire.size}B plain=${plain.size}B ratio=${if (plain.isNotEmpty()) wire.size * 100 / plain.size else 100}% speed=${poseKmh}km/h")
     }
 
     // ================= 路线 =================
@@ -726,12 +800,27 @@ object MapFeeder {
     fun onAck(type: Int, id: Int) {
         handler.post {
             if (!routeOnly() && type == chunkType && id == chunkId) {
-                if (!chunkAcked) baseDeliverySeconds = ((now() - chunkDeliveryStart) / 1000.0).coerceIn(0.2, 60.0)
+                nackCount = 0
+                if (!chunkAcked) {
+                    val delMs = (now() - chunkDeliveryStart).coerceAtLeast(50L)
+                    baseDeliverySeconds = (delMs / 1000.0).coerceIn(0.2, 60.0)
+                    lastDeliveryMs = delMs
+                    bleAckChunks++
+                    bleTotalDeliveryMs += delMs
+                    lastThroughputKBps = (lastWireBytes / 1024.0) / (delMs / 1000.0)
+                    val avgKBps = if (bleTotalDeliveryMs > 0) (bleTotalWireBytes / 1024.0) / (bleTotalDeliveryMs / 1000.0) else 0.0
+                    val budgetS = if (poseKmh >= 10) RouteMapPlan.STEP / (poseKmh / 3.6) else 999.0
+                    val spareS = budgetS - (delMs / 1000.0) - baseBuildSeconds
+                    android.util.Log.i(
+                        "MotoNavBleStats",
+                        "ACK #$chunkId del=${delMs}ms wire=${lastWireBytes}B tp=${"%.1f".format(lastThroughputKBps)}KB/s avg=${"%.1f".format(avgKBps)}KB/s ack=$bleAckChunks tx=$bleTxChunks resend=$bleResendChunks nack=$bleNackChunks budget=${"%.1f".format(budgetS)}s spare=${"%.1f".format(spareS)}s"
+                    )
+                }
                 chunkAcked = true
                 haveConfirmedChunk = true; confirmedCx = chunkCx; confirmedCy = chunkCy; confirmedSat = chunkSat
                 confirmedHalf = chunkHalf
                 if (type == TYPE_RASTER) confirmedRasterBytes = chunkSentPlainBytes
-                val pendingBld = pendingBuildingBytes
+                val pendingBld = if (poseKmh >= 80) null.also { pendingBuildingBytes = null } else pendingBuildingBytes
                 if (pendingBld != null) {
                     pendingBuildingBytes = null
                     chunkBytes = pendingBld
@@ -745,12 +834,16 @@ object MapFeeder {
                     return@post
                 }
                 status = "圆屏已收到普通底图"
+                if (pendingZoomFetch) {
+                    triggerPendingZoomFetchIfReady()
+                    return@post
+                }
                 // 规划页停车等待时也能接着准备起点底图，不依赖下一次行驶定位。
-                val maps=offlineMaps
+                val maps = if (desiredHalf(userZoom, satMode()) <= HALF) offlineMaps else null
                 if (maps!=null && enabled && !fetching) {
                     val progress=if (havePose) maps.plan.progress(poseX,poseY,routeProgress) else 0.0
                     val point=maps.plan.at(progress)
-                    val node=maps.plan.nodes[maps.plan.target(progress,!havePose || poseKmh<4)]
+                    val node=maps.plan.nodes[maps.plan.target(progress,!havePose || poseKmh<4,poseKmh,userZoom)]
                     if ((!havePose || kotlin.math.hypot(poseX-point.x,poseY-point.y)<400) &&
                         (kotlin.math.abs(node.x-chunkCx)>1 || kotlin.math.abs(node.y-chunkCy)>1 ||
                             (buildingMode() && !chunkBuildingsComplete && maps.read(node)!=null)))
@@ -762,12 +855,23 @@ object MapFeeder {
         }
     }
 
-    /** 圆屏回复 "N,类型,编号"：增量差分参考不匹配，清除参考底图并立刻重发全量压缩底图 */
+    /** 圆屏回复 "N,类型,编号"：增量差分参考不匹配，清除参考底图并立刻重发全量压缩底图；连续多次失败则放弃异常包重抓 */
     fun onNack(type: Int, id: Int) {
         handler.post {
             if (!routeOnly() && type == chunkType && id == chunkId) {
+                bleNackChunks++
+                nackCount++
                 haveConfirmedChunk = false
                 confirmedRasterBytes = null
+                if (nackCount >= 3) {
+                    nackCount = 0
+                    haveChunk = false
+                    chunkAcked = true
+                    chunkBytes = null
+                    lastFetchFail = now()
+                    status = "圆屏底图解码异常，稍后重新抓取"
+                    return@post
+                }
                 chunkAcked = false
                 sendChunk()
             }
@@ -799,6 +903,7 @@ object MapFeeder {
     private fun checkResend() {
         if (!BleLink.isConnected || BleLink.bulkPending()) return
         if (chunkBytes != null && !chunkAcked && now() - chunkSentAt > RESEND_MS) {
+            bleResendChunks++
             haveConfirmedChunk = false
             confirmedRasterBytes = null
             sendChunk()
@@ -816,15 +921,47 @@ object MapFeeder {
         BleLink.bulkProgress(chunkType,chunkId) ?: -1,fetching,
         lastFetchFail>0 && (status.contains("失败") || status.contains("内存不足")),haveConfirmedChunk && chunkAcked)
 
+    fun bleStatsCompact(): String {
+        if (bleTxChunks <= 0) return ""
+        val ratioPct = if (lastPlainBytes > 0) (lastWireBytes * 100 / lastPlainBytes) else 100
+        val budgetS = if (poseKmh >= 10) RouteMapPlan.STEP / (poseKmh / 3.6) else 0.0
+        val spareS = if (budgetS > 0) budgetS - (lastDeliveryMs / 1000.0) - baseBuildSeconds else 0.0
+        val spareText = when {
+            bleAckChunks == 0 -> "待确认"
+            budgetS <= 0 -> "均速${"%.0f".format(if (bleTotalDeliveryMs > 0) (bleTotalWireBytes / 1024.0) / (bleTotalDeliveryMs / 1000.0) else 0.0)}KB/s"
+            spareS < 2.0 -> "吃紧(${"%.1f".format(spareS)}s)"
+            else -> "冗余+${"%.1f".format(spareS)}s"
+        }
+        return "蓝牙 发${bleTxChunks}/收${bleAckChunks}/重${bleResendChunks} · " +
+            "${"%.0f".format(lastWireBytes / 1024.0)}/${"%.0f".format(lastPlainBytes / 1024.0)}KB(${ratioPct}%) · " +
+            "${"%.1f".format(lastDeliveryMs / 1000.0)}s(${"%.1f".format(lastThroughputKBps)}KB/s) · $spareText"
+    }
+
     fun infoText(): String =
         if (!enabled) "已关闭" else if (routeOnly()) "龙珠雷达：绿色网格，无底图下载与传输\n$routeInfo${if (routeAcked) "（圆屏已确认）" else ""}" else "来源：${sourceName()}　$status\n$chunkInfo${if (lastWireBytes > 0) "（传输 ${maxOf(1, lastWireBytes / 1024)} KB）" else ""}${if (chunkAcked) "（圆屏已确认）" else ""}\n" +
             "$routeInfo${if (routeAcked) "（圆屏已确认）" else ""}\n" + offlineStatus() + "\n" + coverageInfo()
 
     private fun coverageInfo(): String {
-        if (!haveConfirmedChunk || !havePose) return "地图覆盖：等待圆屏确认"
+        val avgKBps = if (bleTotalDeliveryMs > 0) (bleTotalWireBytes / 1024.0) / (bleTotalDeliveryMs / 1000.0) else 0.0
+        val ratioPct = if (lastPlainBytes > 0) (lastWireBytes * 100 / lastPlainBytes) else 100
+        val budgetS = if (poseKmh >= 10) RouteMapPlan.STEP / (poseKmh / 3.6) else 0.0
+        val spareS = if (budgetS > 0) budgetS - (lastDeliveryMs / 1000.0) - baseBuildSeconds else 0.0
+        val evalText = when {
+            bleAckChunks == 0 -> "等待首块统计"
+            budgetS <= 0 -> "均速 ${"%.1f".format(avgKBps)} KB/s"
+            spareS < 2.0 -> "带宽吃紧(余量 ${"%.1f".format(spareS)}s)"
+            else -> "冗余充足(余量 +${"%.1f".format(spareS)}s)"
+        }
+        val bleStatLine = if (bleTxChunks > 0) {
+            "\n蓝牙统计：发${bleTxChunks}/收${bleAckChunks}/重传${bleResendChunks}/NACK${bleNackChunks} · " +
+                "上块 ${"%.1f".format(lastWireBytes / 1024.0)}/${"%.1f".format(lastPlainBytes / 1024.0)}KB(${ratioPct}% $lastPackMode) · " +
+                "${"%.1f".format(lastDeliveryMs / 1000.0)}s(${"%.1f".format(lastThroughputKBps)}KB/s) · $evalText"
+        } else ""
+        if (!haveConfirmedChunk || !havePose) return "地图覆盖：等待圆屏确认$bleStatLine"
         val distance = maxOf(kotlin.math.abs(poseX - confirmedCx), kotlin.math.abs(poseY - confirmedCy))
-        val margin = (confirmedHalf - MapCoveragePolicy.viewRadius(150) - distance).roundToInt()
+        val margin = (confirmedHalf - MapCoveragePolicy.viewRadius(150, userZoom) - distance).roundToInt()
         return "已确认覆盖 ${(confirmedHalf * 2).roundToInt()} 米，可见余量 $margin 米\n" +
-            "普通图构建 ${(baseBuildSeconds * 10).roundToInt() / 10.0} 秒，确认 ${(baseDeliverySeconds * 10).roundToInt() / 10.0} 秒，准备预留 ${basePreparationSeconds().roundToInt()} 秒"
+            "普通图构建 ${(baseBuildSeconds * 10).roundToInt() / 10.0} 秒，确认 ${(baseDeliverySeconds * 10).roundToInt() / 10.0} 秒，准备预留 ${basePreparationSeconds().roundToInt()} 秒" +
+            bleStatLine
     }
 }

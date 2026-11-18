@@ -188,24 +188,14 @@ void drawWaiting(int st) {
   // 1. 绘制正宗罪恶都市风格地图背景 (暖沙色街区、青绿水面、公园绿地、粉紫路线与车标，半透明暗化)
   drawThemedMapBackground();
 
-  // 2. 顶部大号原生电池图标 (彻底恢复 Stopwatch 52x24 经典原版样式，内嵌电量数字，充电带闪电)
-  extern void drawBattery(int x0, int y0, bool backing = false);
-  drawBattery(CX - 28, 20, true);
+  // 2. 居中大时钟与日期毛玻璃半透明卡片 (整体上移至 60~190，尺寸放大为 280x130，时间字号放大为 5.2f！)
+  const int clockW = 280, clockH = 130;
+  const int clockX = CX - clockW / 2;
+  const int clockY = 60;
+  drawTranslucentRoundRect(clockX, clockY, clockW, clockH, 22, 0x0000, 200);
+  gfx->drawRoundRect(clockX, clockY, clockW, clockH, 22, 0x39E7);
 
-  // 3. 原生经典连接状态提示 (居中醒目大字号，彻底告别细小微型胶囊)
-  if (st == WAIT_READY || (bleConnected && bleAuthed)) {
-    // 采用与罪恶都市地图一致的高雅柔和绿 0x760D
-    aaDisc((float)(CX - 38), 58.0f, 4.5f, 0x760D);
-    drawAaString(CX + 6, 58, "READY", 1.8f, 1.05f, 11.5f, 0x760D, true);
-  } else if (st == WAIT_NOLINK || !bleConnected) {
-    aaDisc((float)(CX - 42), 58.0f, 4.5f, C_GREY);
-    drawAaString(CX + 6, 58, "NO LINK", 1.8f, 1.05f, 11.5f, C_GREY, true);
-  } else {
-    aaDisc((float)(CX - 48), 58.0f, 4.5f, C_RED);
-    drawAaString(CX + 6, 58, "LINK LOST", 1.8f, 1.05f, 11.5f, C_RED, true);
-  }
-
-  // 4. 获取实时系统时间
+  // 获取实时系统时间
   time_t nowSec = time(NULL);
   struct tm *t = localtime(&nowSec);
   int hour = t ? t->tm_hour : 12;
@@ -214,37 +204,45 @@ void drawWaiting(int st) {
   int mday = t ? t->tm_mday : 3;
   int wday = t ? t->tm_wday : 2;
 
-  // 5. 居中大时钟与日期毛玻璃半透明卡片 (136px~226px，高对比度磨砂底座，文字清晰优雅)
-  drawTranslucentRoundRect(CX - 120, 136, 240, 90, 18, 0x0000, 200);
-  gfx->drawRoundRect(CX - 120, 136, 240, 90, 18, 0x39E7);
-
   char clockBuf[12];
   snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d", hour, min);
-  drawAaString(CX, 168, clockBuf, 4.0f, 2.3f, 30.0f, C_WHITE, true);
+  drawAaString(CX, clockY + 50, clockBuf, 5.2f, 3.0f, 38.0f, C_WHITE, true);
 
   char dateBuf[24];
   snprintf(dateBuf, sizeof(dateBuf), "%s %02d  %s", getMonthStr(mon), mday, getWdayStr(wday));
-  drawAaString(CX, 206, dateBuf, 1.8f, 1.05f, 12.0f, 0xAFBD, true);
+  drawAaString(CX, clockY + 104, dateBuf, 2.0f, 1.15f, 13.0f, 0xAFBD, true);
 
-  // 6. 经典 Rockstar (R星) 风格五角星按钮 (CX=233, Y=316)
-  const int btnCY = 316;
-  // 半透明磨砂纯黑底座 (毛玻璃质感，边缘柔和微光)
-  drawTranslucentCircle(CX, btnCY, 32, 0x0000, 180);
-  gfx->drawCircle(CX, btnCY, 32, 0x4A69);
-  gfx->drawCircle(CX, btnCY, 33, 0x2124);
+  // 3. READY / NO LINK 连接状态提示 (移动到时间卡片正下方 Y=222)
+  const int readyY = clockY + clockH + 30; // 220
+  if (st == WAIT_READY || (bleConnected && bleAuthed)) {
+    aaDisc((float)(CX - 38), (float)readyY, 4.5f, 0x760D);
+    drawAaString(CX + 6, readyY, "READY", 1.8f, 1.05f, 11.5f, 0x760D, true);
+  } else if (st == WAIT_NOLINK || !bleConnected) {
+    aaDisc((float)(CX - 42), (float)readyY, 4.5f, C_GREY);
+    drawAaString(CX + 6, readyY, "NO LINK", 1.8f, 1.05f, 11.5f, C_GREY, true);
+  } else {
+    aaDisc((float)(CX - 48), (float)readyY, 4.5f, C_RED);
+    drawAaString(CX + 6, readyY, "LINK LOST", 1.8f, 1.05f, 11.5f, C_RED, true);
+  }
+
+  // 4. 经典 Rockstar (R星) 风格五角星按钮 (CX=233, Y=322)
+  const int btnCY = 322;
+  drawTranslucentCircle(CX, btnCY, 34, 0x0000, 180);
+  gfx->drawCircle(CX, btnCY, 34, 0x4A69);
+  gfx->drawCircle(CX, btnCY, 35, 0x2124);
 
   // R星五角星：纯白实心填充，硬朗金黄轮廓描边
-  drawRockstarStar(CX, btnCY, 18.0f, 7.5f, C_WHITE, 0xFDE0);
+  drawRockstarStar(CX, btnCY, 19.0f, 8.0f, C_WHITE, 0xFDE0);
 
   // 按钮下方文字标签
-  drawAaString(CX, btnCY + 44, "FAVORITES", 1.4f, 0.85f, 9.5f, 0x7BEF, true);
+  drawAaString(CX, btnCY + 46, "FAVORITES", 1.4f, 0.85f, 9.5f, 0x7BEF, true);
 
-  // 7. 如果用户点击打开了目的地抽屉浮层，则覆盖绘制
+  // 5. 如果用户点击打开了目的地抽屉浮层，则覆盖绘制
   if (destSheetOpen) {
     drawDestinationsSheet();
   }
 
-  // 8. 底部页面指示点
+  // 6. 底部页面指示点
   drawPageDots();
   needFlush = true;
 }
@@ -280,7 +278,6 @@ inline bool waitingScreenTap(int x, int y) {
     for (int i = 0; i < showCount; i++) {
       int curY = startY + i * (itemH + 10);
       if (x >= itemX && x <= itemX + itemW && y >= curY && y <= curY + itemH) {
-        // 触发微震反馈 (遵循暂不实现从圆屏规划导航功能)
         CompanionMode::startVibration(60, 25);
         drawWaiting(waitSt);
         return true;
@@ -289,13 +286,12 @@ inline bool waitingScreenTap(int x, int y) {
     return true;
   }
 
-  // 未展开浮层时：检查是否点击了 R星五角星按钮 (CX=233, btnCY=322, 半径 38)
+  // 未展开浮层时：检查是否点击了 R星五角星按钮 (CX=233, btnCY=322, 半径 40)
   int dx = x - CX;
   int dy = y - 322;
-  if (dx * dx + dy * dy <= 38 * 38) {
+  if (dx * dx + dy * dy <= 40 * 40) {
     CompanionMode::startVibration(50, 20);
     destSheetOpen = true;
-    // 向手机请求最新的常用地点和历史
     if (bleConnected) {
       pendingEvt = "T,DEST_Q";
     }
