@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include "RasterContinuity.h"
 #include "CameraIcons.h"
+#include "RingFastColors.h"
 
 void drawTrafficLightLab(uint32_t now);
 void drawCompassBlip(float px, float py, bool outside);
@@ -174,6 +175,11 @@ unsigned long lastMapDraw = 0;
 
 // 画图用的临时数组（内部内存，速度快）
 float *tmpX = nullptr, *tmpY = nullptr;
+
+// 路线走硬件快速填充（无抗锯齿）：viceAAQuad 是逐像素 4 平面混合，单核 39ms/帧，是最大瓶颈；
+// 改用 Arduino_GFX 原生 fillTriangle/fillCircle 后约降到 12ms。代价是路线边缘变硬边锯齿，
+// 与底图 2×2 块状风格一致。路网要素/车道不受影响（它们不置此开关）。
+bool mapFastFill = false;
 
 void mapInit() {
   bulks[1].cap = MAP_MAX;   bulks[1].buf = (uint8_t *)ps_malloc(MAP_MAX);
@@ -595,7 +601,7 @@ void parallelRows(void (*fn)(int, int, int), int y0, int y1) {
 // v2.5 画图片地图：屏幕上每个像素反算到地图图片上的位置，取颜色（只画圆环以内）
 // v5.7 改成按行分给两个核心画（参数放在全局变量里）
 struct { float cx, cy, sc, cs, sn; uint16_t pal[16]; uint16_t backPal[16]; bool backHasPal; uint16_t *fb; bool pix2; int32_t viceGain; int viceRotation; } RM;
-#define PIXB 3                                      // v6.1 掌机像素：3×3 个屏幕像素当一个大像素
+#define PIXB 2                                      // v6.1 掌机像素：N×N 个屏幕像素当一个大像素。2=半分辨率跳行，兼顾流畅与画质
 
 // RGB565 双通道展开：用于定点数单周期双线性色彩混合
 static inline uint32_t rasRgbSpread(uint16_t c) {
@@ -690,7 +696,7 @@ static inline uint16_t sampleRasterBilinear(int32_t U, int32_t V, const uint16_t
   return colCur;
 }
 
-void rasterRows(int y0, int y1, int step) {
+void __attribute__((optimize("O3"))) rasterRows(int y0, int y1, int step) {
   uint16_t *fb = RM.fb;
   const uint16_t *pal = RM.pal;
   float cx = RM.cx, cy = RM.cy, sc = RM.sc, cs = RM.cs, sn = RM.sn;
@@ -930,7 +936,7 @@ void drawRasterMap(float cx, float cy, float sc, float cs, float sn) {
     for (int i=0;i<16;i++) RM.pal[i]=0x0000;
     RM.pal[1]=0x8410; // independent monochrome road mask; no building/park/water layer
   }
-  RM.pix2 = styleIdx() == ST_PIXEL;
+  RM.pix2 = true;  // 底图 2×2 跳行（PIXB=2）：光栅采样量降至 1/4；圆环/路线/文字仍全分辨率，画质可接受
   RM.cx = cx; RM.cy = cy; RM.sc = sc; RM.cs = cs; RM.sn = sn;
   if (styleIdx() == 1 && !rasHasPal && rasterViceValid) {
     prepareVicePalette(RM.pal);
@@ -1090,6 +1096,7 @@ void drawRouteCurved(float a, float b, float cx, float cy, float sc, float cs, f
 void drawRouteRange(float a, float b, float cx, float cy, float sc, float cs, float sn, float viewR,
                     float w0, float w1, uint16_t c0, uint16_t c1) {
   if (b - a < 0.001f) return;
+  bool prevFF = mapFastFill; mapFastFill = true;      // 路线走硬件填充（省 ~27ms/帧）
   for (int pass = 0; pass < 2; pass++) {
     for (int bi = 0; bi * RB_STEP < routeN - 1; bi++) {
       int s = bi * RB_STEP, e = min(routeN - 1, s + RB_STEP);
@@ -1110,6 +1117,7 @@ void drawRouteRange(float a, float b, float cx, float cy, float sc, float cs, fl
       if (m >= 2) mapPolyline(tmpX, tmpY, m, pass == 0 ? w0 : w1, pass == 0 ? c0 : c1, true);
     }
   }
+  mapFastFill = prevFF;
 }
 
 // v4.4 原路线：格式和导航路线一样（坐标系、起点、点数、差值），后面的红绿灯不管
@@ -1141,6 +1149,7 @@ void parseGhost(const uint8_t *p, uint32_t len) {
 // v4.4 画原路线：橙色细线，画在导航路线下面（两条重合的地方只看到导航路线，分开的地方才露出来）
 void drawGhost(float cx, float cy, float sc, float cs, float sn, float viewR, float w) {
   if (ghostN < 2 || ghostFrame != posFrame) return;
+  bool prevFF = mapFastFill; mapFastFill = true;      // 与路线同风格：硬件填充
   for (int bi = 0; bi * RB_STEP < ghostN - 1; bi++) {
     const int32_t *bb = gbBox + 4 * bi;
     if (bb[2] < cx - viewR || bb[0] > cx + viewR || bb[3] < cy - viewR || bb[1] > cy + viewR) continue;
@@ -1151,6 +1160,7 @@ void drawGhost(float cx, float cy, float sc, float cs, float sn, float viewR, fl
     }
     if (m >= 2) mapPolyline(tmpX, tmpY, m, w, styleIdx()==ST_MINIMAL ? 0x8410 : 0xFD20, true);
   }
+  mapFastFill = prevFF;
 }
 
 // 'M' 类型 编号 总片数(2) 片序号(2) 总字节(4) 偏移(4) + 数据
@@ -1498,13 +1508,26 @@ bool mapModeActive() {
 // v2.2：只在方向变化明显的拐点补圆（直线上的点不画圆，省很多时间）；caps = 两端也画圆头
 struct VicePlane { float nx, ny, c, support; uint8_t angle; };
 
+// 物理屏是圆形（半径 LCD_WIDTH/2）：方形画布四角的像素在圆屏上根本不可见。
+// 预计算每行圆的半宽，给逐像素绘制做圆形裁剪，省掉无效计算（零画质损失）。
+int16_t circHW[LCD_HEIGHT];
+static void circHWInit() {
+  if (circHW[0] > 0) return;
+  const int half = LCD_WIDTH / 2 + 1;                  // +1：留 1 像素余量，绝不裁掉可见边缘
+  for (int y = 0; y < LCD_HEIGHT; y++) {
+    float dy = (float)y + 0.5f - (float)(LCD_WIDTH / 2);
+    float q = (float)half * half - dy * dy;
+    circHW[y] = q <= 0 ? 0 : (int16_t)(sqrtf(q) + 0.5f);
+  }
+}
+
 static inline void viceBlendPixel(uint16_t *row, int x, uint16_t color, float coverage) {
   int alpha = (int)(coverage * 256.0f + 0.5f);
   if (alpha <= 0) return;
   row[x] = alpha >= 256 ? color : blendF(row[x], color, alpha);
 }
 
-void viceAAQuad(const float *px, const float *py, uint16_t color) {
+void __attribute__((optimize("O3"))) viceAAQuad(const float *px, const float *py, uint16_t color) {
   VicePlane plane[4];
   float cx = 0, cy = 0, ymin = py[0], ymax = py[0];
   for (int i = 0; i < 4; i++) { cx += px[i]; cy += py[i]; ymin = fminf(ymin, py[i]); ymax = fmaxf(ymax, py[i]); }
@@ -1517,6 +1540,7 @@ void viceAAQuad(const float *px, const float *py, uint16_t color) {
     if ((cx - px[i]) * nx + (cy - py[i]) * ny < 0) { nx = -nx; ny = -ny; }
     plane[i] = {nx, ny, -nx * px[i] - ny * py[i], (fabsf(nx) + fabsf(ny)) * 0.5f, viceCoverageAngle(nx, ny)};
   }
+  circHWInit();
   uint16_t *fb = gfx->getFramebuffer();
   int ya = max(0, (int)floorf(ymin - 1)), yb = min(LCD_HEIGHT - 1, (int)ceilf(ymax + 1));
   for (int y = ya; y <= yb; y++) {
@@ -1540,6 +1564,13 @@ void viceAAQuad(const float *px, const float *py, uint16_t color) {
     }
     if (outside || left > right) continue;
     int xa = max(0, (int)ceilf(left - 0.5f)), xb = min(LCD_WIDTH - 1, (int)floorf(right - 0.5f));
+    // 圆屏裁剪：收进该行可见圆弧，圆外四角的像素在物理屏上不可见，省掉逐像素混合
+    int chw = circHW[y];
+    if (chw <= 0) continue;
+    int xmin = LCD_WIDTH / 2 - chw, xmax = LCD_WIDTH / 2 + chw - 1;
+    if (xa < xmin) xa = xmin;
+    if (xb > xmax) xb = xmax;
+    if (xa > xb) continue;
     int ia = max(xa, (int)ceilf(solidLeft - 0.5f)), ib = min(xb, (int)floorf(solidRight - 0.5f));
     if (noSolid || ia > ib) { ia = xb + 1; ib = xb; }
     uint16_t *row = fb + y * LCD_WIDTH;
@@ -1564,7 +1595,8 @@ void viceAAQuad(const float *px, const float *py, uint16_t color) {
   }
 }
 
-void viceAACircle(float cx, float cy, float radius, uint16_t color) {
+void __attribute__((optimize("O3"))) viceAACircle(float cx, float cy, float radius, uint16_t color) {
+  circHWInit();
   uint16_t *fb = gfx->getFramebuffer();
   int ya = max(0, (int)floorf(cy - radius - 1)), yb = min(LCD_HEIGHT - 1, (int)ceilf(cy + radius + 1));
   float outer = radius + 0.5f, inner = fmaxf(0, radius - 0.5f);
@@ -1573,6 +1605,13 @@ void viceAACircle(float cx, float cy, float radius, uint16_t color) {
     if (fabsf(dy) >= outer) continue;
     float extent = sqrtf(outer * outer - dy * dy);
     int xa = max(0, (int)ceilf(cx - extent - 0.5f)), xb = min(LCD_WIDTH - 1, (int)floorf(cx + extent - 0.5f));
+    // 圆屏裁剪：收进该行可见圆弧
+    int chw = circHW[y];
+    if (chw <= 0) continue;
+    int xmin = LCD_WIDTH / 2 - chw, xmax = LCD_WIDTH / 2 + chw - 1;
+    if (xa < xmin) xa = xmin;
+    if (xb > xmax) xb = xmax;
+    if (xa > xb) continue;
     int ia = xb + 1, ib = xb;
     if (fabsf(dy) < inner) {
       float core = sqrtf(inner * inner - dy * dy);
@@ -1591,8 +1630,8 @@ void viceAACircle(float cx, float cy, float radius, uint16_t color) {
   }
 }
 
-void mapPolyline(const float *xs, const float *ys, int n, float w, uint16_t c, bool caps) {
-  bool aa = (styleIdx() != ST_PIXEL);
+void __attribute__((optimize("O3"))) mapPolyline(const float *xs, const float *ys, int n, float w, uint16_t c, bool caps) {
+  bool aa = !mapFastFill && (styleIdx() != ST_PIXEL);
   if (aa) initViceSampling();
   float r = w / 2;
   float pdx = 0, pdy = 0;
@@ -1615,9 +1654,10 @@ void mapPolyline(const float *xs, const float *ys, int n, float w, uint16_t c, b
       gfx->fillTriangle(x0 - nx, y0 - ny, x1 - nx, y1 - ny, x1 + nx, y1 + ny, c);
     }
     if (r >= 1.0f) {
-      if (havePrev) {
-        if (aa) viceAACircle(x0, y0, r, c); else gfx->fillCircle(x0, y0, r, c);
-      } else if (caps) {
+      // 仅在拐点补圆：直线段之间四边形本身已连续，圆头是重复绘制（v2.2 注释的原意，此前未接上）
+      // 转角 <5° 时两侧四边形的楔形缝隙 <0.4px，视觉不可见，可安全跳过
+      bool needCap = havePrev ? ((ux * pdx + uy * pdy) < 0.996f) : caps;
+      if (needCap) {
         if (aa) viceAACircle(x0, y0, r, c); else gfx->fillCircle(x0, y0, r, c);
       }
       if (caps && i + 2 == n) {
@@ -1893,13 +1933,71 @@ void capLine(int y, int thick, uint16_t c) {
 }
 
 // v2.8 带黑色描边的文字（直接浮在地图上）
-void printOutlined(const String &t, int x, int y, int size, uint16_t col) {
-  int o = size >= 3 ? 2 : 1;
-  // v5.8 只画最外一圈偏移（字的笔画至少 o 像素粗，里面那圈会被盖住，画了也白画）
+// ---- v7.9 描边文字缓存 -------------------------------------------------------
+// 描边是“外圈 16 个偏移各重绘一遍 + 本色一遍”= 17 遍整串文字。size 5 时 badge 的距离文字
+// 实测 15.9ms/帧、车速文字 4.3ms/帧，而这两串字一秒才变一次。
+// 这里把描边+本色的成品烘进一个小位图（行距与画布相同，才能直接套用绘图坐标），
+// 按 (文字,位置,字号,颜色) 缓存；命中时只做一次 blit（跳过没被笔画碰过的哨兵像素，
+// 避免把文字方块周围的画面一起涂黑）。一帧里有多串文字，所以开多个槽。
+#define TXC_STR 20
+#define TXC_SLOTS 6
+#define TXC_ROWS 48
+#define TXC_SENT 0x0001                            // 哨兵色：没被笔画碰过的像素（纯黑描边是 0x0000）
+struct TxSlot {
+  uint16_t *buf; char s[TXC_STR]; int x, y, size, bx, by, bw, bh; uint16_t col; bool valid;
+};
+static TxSlot txSlots[TXC_SLOTS] = {};
+static int txNext = 0;
+
+static inline void printOutlinedLegacy(const String &t, int x, int y, int size, uint16_t col, int o) {
   for (int dy = -o; dy <= o; dy++)
     for (int dx = -o; dx <= o; dx++)
       if ((dx || dy) && (o < 2 || abs(dx) == o || abs(dy) == o)) printCentered(t, x + dx, y + dy, size, C_BLACK);
   printCentered(t, x, y, size, col);
+}
+
+static inline void txBlit(const TxSlot &sl, uint16_t *fb) {
+  for (int i = 0; i < sl.bh; i++) {
+    const uint16_t *s = sl.buf + i * LCD_WIDTH;
+    uint16_t *d = fb + (sl.by + i) * LCD_WIDTH + sl.bx;
+    for (int j = 0; j < sl.bw; j++) if (s[j] != TXC_SENT) d[j] = s[j];
+  }
+}
+
+void printOutlined(const String &t, int x, int y, int size, uint16_t col) {
+  const int o = size >= 3 ? 2 : 1;
+  const int w = (int)t.length() * 6 * size;         // GFX 内置字体：字宽 6×size、字高 8×size
+  const int bx = x - w / 2 - o, by = y - o;
+  const int bw = w + 2 * o + 1, bh = 8 * size + 2 * o + 1;
+  uint16_t *fb = gfx->getFramebuffer();
+  if (!fb || bx < 0 || by < 0 || bx + bw > LCD_WIDTH || by + bh > LCD_HEIGHT ||
+      bh > TXC_ROWS || t.length() >= TXC_STR) {
+    printOutlinedLegacy(t, x, y, size, col, o);
+    return;
+  }
+  for (int i = 0; i < TXC_SLOTS; i++) {             // 命中直接 blit
+    TxSlot &sl = txSlots[i];
+    if (sl.valid && sl.bx == bx && sl.by == by && sl.bw == bw && sl.bh == bh &&
+        sl.x == x && sl.y == y && sl.size == size && sl.col == col &&
+        strncmp(sl.s, t.c_str(), TXC_STR) == 0) { txBlit(sl, fb); return; }
+  }
+  TxSlot &sl = txSlots[txNext];                     // 没命中：占一个槽重烘
+  txNext = (txNext + 1) % TXC_SLOTS;
+  if (!sl.buf) sl.buf = (uint16_t *)ps_malloc((size_t)TXC_ROWS * LCD_WIDTH * 2);
+  if (!sl.buf) { printOutlinedLegacy(t, x, y, size, col, o); return; }
+  sl.valid = false;
+  for (int i = 0; i < bh; i++) {                    // 只清文字方块这一块
+    uint16_t *r = sl.buf + i * LCD_WIDTH;
+    for (int j = 0; j < bw; j++) r[j] = TXC_SENT;
+  }
+  // 把画布的写指针挪成“绝对坐标 → 槽内相对坐标”，这样 17 遍描边可以直接落到位图里
+  gfx->setFramebuffer(sl.buf - ((size_t)by * LCD_WIDTH + bx));
+  printOutlinedLegacy(t, x, y, size, col, o);
+  gfx->setFramebuffer(fb);
+  strncpy(sl.s, t.c_str(), TXC_STR - 1); sl.s[TXC_STR - 1] = 0;
+  sl.bx = bx; sl.by = by; sl.bw = bw; sl.bh = bh;
+  sl.x = x; sl.y = y; sl.size = size; sl.col = col; sl.valid = true;
+  txBlit(sl, fb);
 }
 
 // 把一块区域调暗（半透明深色底），a = 保留多少原来的亮度（0~255）
@@ -2260,13 +2358,13 @@ void drawMapBadge() {
   iconHalo = true;
   if (!nearJ) {
     int up = tripOn ? 24 : 0;                          // v3.1 有行程信息时整体上移，下面留一行
-    drawBigIconAt((isS || far) ? String("S") : navDir, C_WHITE, 395 - up, 1.0f, CX - 48, 368 - up, 418 - up, 60);
+    drawBigIconAtCached((isS || far) ? String("S") : navDir, C_WHITE, 395 - up, 1.0f, CX - 48, 368 - up, 418 - up, 60);
     int sz = dt.length() <= 4 ? 4 : 3;
     printOutlined(dt, CX + 46, (sz == 4 ? 378 : 382) - up, sz, C_WHITE);
     if (tripOn) drawTripLine(404);
   } else {
     const int top = 344;                               // v3.3 车道移到了上面，底部只放箭头和距离
-    drawBigIconAt(navDir, col, top + 30, 1.0f, CX - 58, top, top + 60, 84);
+    drawBigIconAtCached(navDir, col, top + 30, 1.0f, CX - 58, top, top + 60, 84);
     printOutlined(dt, CX + 54, top + 14, dt.length() <= 4 ? 5 : 4, col);
   }
   iconHalo = false;
@@ -2484,8 +2582,11 @@ static inline float bandCov(float r, float rIn, float rOut) {
 #define RQ_MIN  (4 * 209 * 209)              // 半径 209 以内不用管
 #define RQ_MAX  (4 * 235 * 235)              // 半径 235 以外整段清零
 #define RQ_SH   4
+#define RING_BLOCK 2                          // 圆环按 2×2 块渲染（与底图 2×2 跳行同风格）
 uint16_t *rq2r = nullptr;                    // (q - RQ_MIN) >> 4 → 半径 × 64
 int16_t ringInH[LCD_HEIGHT], ringOutH[LCD_HEIGHT];   // 每行：内圈半宽（以内跳过）、外圈半宽（以外清零）
+// 注：曾尝试「环带像素整圈缓存」，实测无效——进度环是补间动画（turnRingMotion），
+// prog/trip 每帧都在变，缓存 key 永远不命中，反而白付每帧 71KB PSRAM 写入。已移除。
 float ringUx = 0, ringUy = -1;               // 进度条末端方向
 float tripUx = 0, tripUy = -1;               // v7.4 行程环“走过 / 没走”交界方向
 
@@ -2516,7 +2617,35 @@ static inline int bandCov64(int r64, int a, int b) {
   return c <= 0 ? 0 : (c >= 64 ? 64 : c);
 }
 
-static inline void ringPixel(uint16_t *px, int ix, long iy2, int iy) {
+// ---- 圆环快色表：alertAlpha==0 的常态下，把三层圆环颜色预计算成查表 ----
+uint16_t *ringFastColors = nullptr;
+RingFastColors::Key ringFastKey = {};
+bool ringFastValid = false, ringFastTried = false;
+
+static void prepareRingFastColors() {
+  if (!ringFastColors && !ringFastTried) {
+    ringFastTried = true;
+    const size_t bytes = (size_t)RingFastColors::PHASES * RingFastColors::Count * sizeof(uint16_t);
+    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) > bytes + 8192)
+      ringFastColors = (uint16_t *)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!ringFastColors)                                 // 内部 RAM 紧张时退到 PSRAM，宁可慢一点也要走快路径
+      ringFastColors = (uint16_t *)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  }
+  if (!ringFastColors) return;
+  RingFastColors::Key key = {RP.track, RP.trip >= 0, RP.prog > 0.002f, (int)RP.ph, RP.pcol};
+  if (ringFastValid && RingFastColors::same(key, ringFastKey)) return;
+  for (int phase = 0; phase < RingFastColors::PHASES; phase++)
+    for (int i = 0; i < RingFastColors::Count; i++)
+      ringFastColors[phase * RingFastColors::Count + i] =
+        RingFastColors::color(i + RingFastColors::R_LO, phase, key,
+                              TURN_RING_R, TRIP_RING_R, TRIP_H,
+                              C_TRACK, TRIP_DONE_C, TRIP_LEFT_C, C_BLACK);
+  ringFastKey = key;
+  ringFastValid = true;
+}
+
+// 原有慢路径：有 alert 光晕或快色表不可用时
+static inline void ringPixelSlow(uint16_t *px, int ix, long iy2, int iy) {
   long q = (long)ix * ix + iy2;
   int k = (int)((q - RQ_MIN) >> RQ_SH);
   int r64 = rq2r[k < 0 ? 0 : k];
@@ -2558,20 +2687,140 @@ static inline void ringPixel(uint16_t *px, int ix, long iy2, int iy) {
   *px = c;
 }
 
-void ringRows(int y0, int y1, int step) {
+// 快路径：alertAlpha==0 且快色表就绪时，每像素仅一次查表
+static inline void ringPixelFast(uint16_t *px, int ix, long iy2, int iy) {
+  long q = (long)ix * ix + iy2;
+  int k = (int)((q - RQ_MIN) >> RQ_SH);
+  int r64 = rq2r[k < 0 ? 0 : k];
+  int phase = 0;
+  if (RP.trip >= 0) {
+    bool right = ix >= 0;
+    bool before = (ix * tripUy - iy * tripUx) >= 0;
+    bool done = RP.trip >= 0.9999f ? true : RP.trip <= 0.0001f ? false : (RP.trip <= 0.5f ? (right && before) : (right || before));
+    if (done) phase |= 2;
+  }
+  if (RP.track && RP.prog > 0.002f) {
+    bool right = ix >= 0;
+    bool before = (ix * ringUy - iy * ringUx) >= 0;
+    bool done = RP.prog >= 0.9999f || (RP.prog <= 0.5f ? (right && before) : (right || before));
+    if (done) phase |= 1;
+  }
+  int idx = r64 - RingFastColors::R_LO;
+  if ((unsigned)idx < (unsigned)RingFastColors::Count)
+    *px = ringFastColors[phase * RingFastColors::Count + idx];
+  else
+    ringPixelSlow(px, ix, iy2, iy);
+}
+
+// 圆环逐像素绘制（旧路径：有 alert 光晕、或快色表没准备好时用）。O3 不适用：会把
+// ringPixelFast/Slow 全内联展开，代码膨胀后 flash 取指成瓶颈，实测比默认 -Os 慢 7ms，故保持默认。
+void ringRowsLegacy(int y0, int y1, int step) {
   uint16_t *fb = RP.fb;
   const int W = LCD_WIDTH, HW = LCD_WIDTH / 2;
-  for (int y = y0; y < y1; y += step) {
-    uint16_t *row = fb + y * W;
-    int iy = 2 * y + 1 - LCD_HEIGHT;
+  const bool fast = ringFastColors && ringFastValid && RP.alertAlpha == 0;
+  const int B = RING_BLOCK;                                  // 2×2 块：与底图同风格，计算量降到 1/4
+  for (int y = y0; y < y1; y += B) {
+    int yEnd = min(y + B, y1);
+    // 块内各行取“最宽外缘 / 最窄内缘”，整块按同一水平范围填充
+    int ho = 0, hi = LCD_WIDTH;
+    for (int yy = y; yy < yEnd; yy++) {
+      if (ringOutH[yy] > ho) ho = ringOutH[yy];
+      if (ringInH[yy] < hi) hi = ringInH[yy];
+    }
+    for (int yy = y; yy < yEnd; yy++) {                       // 圆外两头：整段清零（黑色 = 0）
+      uint16_t *row = fb + yy * W;
+      if (HW - ho > 0) memset(row, 0, (HW - ho) * 2);
+      if (HW + ho < W) memset(row + HW + ho, 0, (W - HW - ho) * 2);
+    }
+    int iy = 2 * y + 1 - LCD_HEIGHT;                          // 用块首行采样
     long iy2 = (long)iy * iy;
-    int ho = ringOutH[y], hi = ringInH[y];
-    // 圆外两头：整段清零（黑色 = 0）
-    if (HW - ho > 0) memset(row, 0, (HW - ho) * 2);
-    if (HW + ho < W) memset(row + HW + ho, 0, (W - HW - ho) * 2);
-    // 左边一段 [HW-ho, HW-hi)，右边一段 [HW+hi, HW+ho)
-    for (int x = HW - ho; x < HW - hi; x++) ringPixel(row + x, 2 * x + 1 - W, iy2, iy);
-    for (int x = HW + hi; x < HW + ho; x++) ringPixel(row + x, 2 * x + 1 - W, iy2, iy);
+    // 左边一段 [HW-ho, HW-hi)，右边一段 [HW+hi, HW+ho)，每 B 列算一次、填满 B 列 × B 行
+    for (int pass = 0; pass < 2; pass++) {
+      int xa = pass ? HW + hi : HW - ho, xb = pass ? HW + ho : HW - hi;
+      for (int x = xa; x < xb; x += B) {
+        int xe = min(x + B, xb);
+        uint16_t px = fb[y * W + x];                          // 慢路径需读原像素做混合底
+        if (fast) ringPixelFast(&px, 2 * x + 1 - W, iy2, iy);
+        else ringPixelSlow(&px, 2 * x + 1 - W, iy2, iy);
+        for (int yy = y; yy < yEnd; yy++) {
+          uint16_t *row = fb + yy * W;
+          for (int xx = x; xx < xe; xx++) row[xx] = px;
+        }
+      }
+    }
+  }
+}
+
+// ---- v7.9 圆环行内整数增量版（常态路径）--------------------------------------
+// 旧实现对每个 2×2 块都要：算一次 ix²+iy²（32 位乘）、两次 ix*dir 浮点乘、再把结果按
+// 2×2 回填两行；实测 20.4ms/帧。实测发现“逐像素算相位”会把省下的乘法吃回去（23.1ms），
+// 所以这里两者结合：保持 2×2 块（相位每块只算一次 = 1/4 次），块间推进全用加法递推：
+//   · 半径平方   q  += 8·ix + 16     （(ix+4)² = ix² + 8ix + 16，块宽 2 像素 → ix 步进 4）
+//   · 角度投影   sT += 4·ringUy      （方向向量固定，Q16 定点，无浮点、无乘法）
+void ringRows(int y0, int y1, int step) {
+  const bool fast = ringFastColors && ringFastValid && RP.alertAlpha == 0;
+  if (!fast) { ringRowsLegacy(y0, y1, step); return; }
+  uint16_t *fb = RP.fb;
+  const int W = LCD_WIDTH, HW = LCD_WIDTH / 2;
+  const int Cnt = RingFastColors::Count;
+  const int RLO = RingFastColors::R_LO;
+  const int B = RING_BLOCK;
+  const bool hasTrip = RP.trip >= 0, trackOn = RP.track && RP.prog > 0.002f;
+  const bool progAll = RP.prog >= 0.9999f, progHalf = RP.prog <= 0.5f;
+  const bool tripAll = RP.trip >= 0.9999f, tripHalf = RP.trip <= 0.5f;
+  // 方向向量转 Q16 定点：整行只需两次乘法（行首），之后全靠累加
+  const int32_t rUy = (int32_t)lroundf(ringUy * 65536.0f), rUx = (int32_t)lroundf(ringUx * 65536.0f);
+  const int32_t tUy = (int32_t)lroundf(tripUy * 65536.0f), tUx = (int32_t)lroundf(tripUx * 65536.0f);
+  for (int y = y0; y < y1; y += B) {
+    const int yEnd = min(y + B, y1);
+    // 块内各行取“最宽外缘 / 最窄内缘”，整块按同一水平范围填充
+    int ho = 0, hi = LCD_WIDTH;
+    for (int yy = y; yy < yEnd; yy++) {
+      if (ringOutH[yy] > ho) ho = ringOutH[yy];
+      if (ringInH[yy] < hi) hi = ringInH[yy];
+    }
+    for (int yy = y; yy < yEnd; yy++) {                           // 圆外两头：整段清零
+      uint16_t *row = fb + yy * W;
+      if (HW - ho > 0) memset(row, 0, (HW - ho) * 2);
+      if (HW + ho < W) memset(row + HW + ho, 0, (W - HW - ho) * 2);
+    }
+    const int iy = 2 * y + 1 - LCD_HEIGHT;                        // 用块首行采样
+    const int32_t iy2 = (int32_t)iy * iy;
+    const int32_t bT = (int32_t)iy * rUx, bP = (int32_t)iy * tUx;
+    for (int pass = 0; pass < 2; pass++) {
+      const int xa = pass ? HW + hi : HW - ho, xb = pass ? HW + ho : HW - hi;
+      if (xa >= xb) continue;
+      int ix = 2 * xa + 1 - W;
+      int32_t q = (int32_t)ix * ix + iy2;
+      int32_t sT = (int32_t)ix * rUy - bT, sP = (int32_t)ix * tUy - bP;
+      for (int x = xa; x < xb; x += B) {
+        const int xe = min(x + B, xb);
+        int phase = 0;
+        const bool right = x >= HW;
+        if (hasTrip) {
+          const bool before = sP >= 0;
+          if (tripAll || (tripHalf ? (right && before) : (right || before))) phase |= 2;
+        }
+        if (trackOn) {
+          const bool before = sT >= 0;
+          if (progAll || (progHalf ? (right && before) : (right || before))) phase |= 1;
+        }
+        int k = (int)((q - RQ_MIN) >> RQ_SH);
+        if (k < 0) k = 0;
+        const int idx = (int)rq2r[k] - RLO;
+        uint16_t c;
+        if ((unsigned)idx < (unsigned)Cnt) c = ringFastColors[phase * Cnt + idx];
+        else { c = fb[y * W + x]; ringPixelSlow(&c, ix, iy2, iy); }
+        if (xe - x >= 2) {                                          // 2×2 回填：一行一次 32 位写
+          const uint32_t cc = (uint32_t)c | ((uint32_t)c << 16);
+          for (int yy = y; yy < yEnd; yy++) *(uint32_t *)(fb + yy * W + x) = cc;
+          if (xe - x > 2) for (int yy = y; yy < yEnd; yy++) fb[yy * W + x + 2] = c;
+        } else {
+          for (int yy = y; yy < yEnd; yy++) fb[yy * W + x] = c;
+        }        q += 8 * ix + 16; sT += 4 * rUy; sP += 4 * tUy;             // 块宽 2 → ix 步进 4
+        ix += 4;
+      }
+    }
   }
 }
 
@@ -2592,6 +2841,7 @@ void drawRingLayer(bool track, float prog, int thick, uint16_t pcol, uint16_t al
     return;
   }
   ringUx = sinf(RP.prog * 2 * PI); ringUy = -cosf(RP.prog * 2 * PI);
+  if (alertAlpha == 0) prepareRingFastColors();   // 常态：预计算快色表；有预警时回退慢路径
   parallelRows(ringRows, 0, LCD_HEIGHT);
   if (RP.track && RP.prog > 0.002f && RP.prog < 0.998f) { // 剩余弧段 [prog, 1] 两头的圆头
     float h = RP.ph, a = RP.prog * 2 * PI;
@@ -2606,7 +2856,7 @@ uint8_t *vigKeep = nullptr;                // 下标 = 半径² - r0²，值 = �
 int vigK0 = 0, vigK1 = 0;
 struct { uint16_t *fb; float r0, r1; } VP;
 
-void vignetteRows(int y0, int y1, int step) {
+void __attribute__((optimize("O3"))) vignetteRows(int y0, int y1, int step) {
   uint16_t *fb = VP.fb;
   float r0 = VP.r0, r1 = VP.r1, ri2 = r0 * r0, ro2 = r1 * r1;
   for (int y = y0; y < y1; y += step) {

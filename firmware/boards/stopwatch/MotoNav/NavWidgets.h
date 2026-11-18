@@ -349,6 +349,56 @@ void drawBigIconAt(const String &dir, uint16_t col, float cy, float laneK,
   iconEnd();
 }
 
+// ---- v8.0 大图标结果缓存 ----------------------------------------------------
+// iconEnd 的单槽 iconHash 每帧都会被别的图标（车道等）覆盖，且 navAngle 是 app 每帧下发的
+// 浮点角度、带 GPS 抖动，导致 prims 内容每帧不同 → iconRender 逐像素抗锯齿每帧重算
+// （约 6k 像素 × 15 线段，实测 16.9ms）。这里把渲染+缩放好的小位图按稳定 key 缓存：
+// navAngle 量化到整数度吸收抖动，命中时只做一次 blit。
+#define BIGICON_SLOTS 2
+#define BIGICON_W 128
+#define BIGICON_H 128
+struct BigIconSlot { uint32_t key; uint16_t *buf; int w, h, dx, dy; bool valid; };
+static BigIconSlot bigIconSlots[BIGICON_SLOTS];
+static int bigIconNext = 0;
+
+static uint32_t bigIconKey(const String &dir, uint16_t col, float cy, float laneK,
+                           float cx, float top, float bottom, float maxW) {
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < dir.length(); i++) { h ^= (uint8_t)dir[i]; h *= 16777619u; }
+  int qa = isnan(navAngle) ? 30000 : (int)lroundf(navAngle);   // 量化到整数度
+  const uint32_t q[8] = {(uint32_t)col, (uint32_t)(qa + 40000), (uint32_t)(int)cy,
+                         (uint32_t)(int)(laneK * 100), (uint32_t)(int)cx, (uint32_t)(int)top,
+                         (uint32_t)(int)bottom, (uint32_t)(int)maxW};
+  for (int i = 0; i < 8; i++) h ^= q[i] + 0x9e3779b9u + (h << 6) + (h >> 2);
+  if (iconHalo) h ^= 0xDEADBEEFu;
+  return h;
+}
+
+void drawBigIconAtCached(const String &dir, uint16_t col, float cy, float laneK,
+                         float cx, float top, float bottom, float maxW) {
+  uint16_t *fb = gfx->getFramebuffer();
+  const uint32_t key = bigIconKey(dir, col, cy, laneK, cx, top, bottom, maxW);
+  for (int i = 0; i < BIGICON_SLOTS; i++) {
+    BigIconSlot &sl = bigIconSlots[i];
+    if (sl.valid && sl.key == key && sl.buf) {
+      if (fb) for (int y = 0; y < sl.h; y++) {
+        const uint16_t *s = sl.buf + y * BIGICON_W;
+        uint16_t *d = fb + (sl.dy + y) * LCD_WIDTH + sl.dx;
+        for (int x = 0; x < sl.w; x++) if (s[x]) d[x] = s[x];
+      }
+      return;
+    }
+  }
+  drawBigIconAt(dir, col, cy, laneK, cx, top, bottom, maxW);   // miss：正常渲染（内部已写 fb）
+  if (!fb || iconW <= 0 || iconH <= 0 || iconW > BIGICON_W || iconH > BIGICON_H) return;
+  BigIconSlot &sl = bigIconSlots[bigIconNext];
+  bigIconNext = (bigIconNext + 1) % BIGICON_SLOTS;
+  if (!sl.buf) sl.buf = (uint16_t *)ps_malloc((size_t)BIGICON_W * BIGICON_H * 2);
+  if (!sl.buf) return;
+  for (int y = 0; y < iconH; y++) memcpy(sl.buf + y * BIGICON_W, iconBuf + y * ICON_BUF_W, iconW * 2);
+  sl.w = iconW; sl.h = iconH; sl.dx = iconX; sl.dy = iconY; sl.key = key; sl.valid = true;
+}
+
 void drawBigIcon(const String &dir, uint16_t col, float cy, float laneK, float top, float bottom) {
   drawBigIconAt(dir, col, cy, laneK, CX, top, bottom, ICON_MAX_W);
 }

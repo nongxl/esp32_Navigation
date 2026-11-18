@@ -19,11 +19,15 @@ void updateStats() {
     if (Serial) {
       const uint32_t n = mapFrames, pc = perf.pCnt, rc = perf.rasCalls;
       Serial.printf("[PERF] fps=%.1f dt(avg/max)=%u/%ums >50=%u >100=%u | draw=%ums map=%ums ras=%ums ovl=%ums | "
-                    "core(main/wait/help)=%u/%u/%ums | flush=%ums fwait=%ums qspi=%u fast=%d\n",
+                    "core(main/wait/help)=%u/%u/%ums | flush=%ums fwait=%ums qspi=%u fast=%d rf=%d ra=%u deg=%d rotFree=%d rot=%d\n",
                     n / secs, perf.dtSumMs / (n > 1 ? n - 1 : 1), perf.dtMaxMs, perf.over50, perf.over100,
                     mapDrawMsAcc / n, mapMsAcc / n, rasMsAcc / n, ovlMsAcc / n,
                     rc ? perf.rasMainUs / rc / 1000 : 0, rc ? perf.rasWaitUs / rc / 1000 : 0, rc ? perf.rasHelpUs / rc / 1000 : 0,
-                    fc ? fm / fc : 0, (uint32_t)(flushWaitUsAcc / n / 1000), (unsigned)qspiMHz, fastDev ? 1 : 0);
+                    fc ? fm / fc : 0, (uint32_t)(flushWaitUsAcc / n / 1000), (unsigned)qspiMHz, fastDev ? 1 : 0,
+                    ringFastValid ? 1 : 0, (unsigned)RP.alertAlpha,
+                    screenDeg, rotFree ? 1 : 0, screenRot);
+      Serial.print("[PERF-Q]");
+      Serial.println(pendingProf);
       Serial.printf("[PERF] pose #p=%u gap(avg/max)=%u/%ums spd=%.0fkm/h | hdg err.max=%.1f vel.max=%.0f step.max=%.1f clamp12=%u rot.frames=%u rate.max=%.1f | "
                     "scale=%.2f raster=%d vice=%d back=%u style=%d\n",
                     pc, pc ? perf.pGapSumMs / pc : 0, perf.pGapMaxMs, posKmh,
