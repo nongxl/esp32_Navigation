@@ -281,7 +281,10 @@ void handleText(const String &m) {
     // Preserve legacy #R,quarter while applying the exact angle when supplied.
     int d;
     if (ScreenRotationCommand::parse(m.c_str(), d) && d != screenDeg) {
-      setScreenDeg(d, true); navDirty = true; needFlush = true;
+      setScreenDeg(d, true);
+      if (inNav) navDirty = true;
+      renderPage(page);
+      needFlush = true;
     }
     return;
   }

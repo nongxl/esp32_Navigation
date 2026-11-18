@@ -104,7 +104,7 @@ class AmapCaptureHost private constructor(private val context: Context,private v
             setPreview(preview)
         }
         map.showBuildings(style==MapStylePolicy.ORIGINAL);withoutBuildings=null
-        val margin=if(n==600)20.0 else 160.0
+        val margin=if(n==600)20.0 else if(mpp > 2.5) 300.0 else 160.0
         val bounds=LatLngBounds(LatLng(f.lat(y0-n*mpp-margin),f.lng(x0-margin)),
             LatLng(f.lat(y0+margin),f.lng(x0+n*mpp+margin)))
         var cameraDone=false
@@ -155,8 +155,10 @@ class AmapCaptureHost private constructor(private val context: Context,private v
                             val projection=map.projection
                             val tl=projection.toScreenLocation(LatLng(north,west)); val tr=projection.toScreenLocation(LatLng(north,east))
                             val bl=projection.toScreenLocation(LatLng(south,west)); val br=projection.toScreenLocation(LatLng(south,east))
-                            require(abs(tl.y-tr.y)<=2 && abs(tl.x-bl.x)<=2 && abs(bl.y-br.y)<=2 && abs(tr.x-br.x)<=2) { "高德截图坐标未对齐" }
-                            require(tr.x-tl.x>=n-2 && bl.y-tl.y>=n-2) { "高德截图精度不足，保留当前地图" }
+                            val alignTol = if (mpp > 2.5) 8 else 2
+                            require(abs(tl.y-tr.y)<=alignTol && abs(tl.x-bl.x)<=alignTol && abs(bl.y-br.y)<=alignTol && abs(tr.x-br.x)<=alignTol) { "高德截图坐标未对齐" }
+                            val minSpan = if (mpp > 2.5) 400 else (n - 2)
+                            require(tr.x-tl.x>=minSpan && bl.y-tl.y>=minSpan) { "高德截图精度不足，保留当前地图" }
                             val pixels=IntArray(size*size)
                             bitmap.getPixels(pixels,0,size,0,0,size,size)
                             val reference=if(n==600)withoutBuildings else null

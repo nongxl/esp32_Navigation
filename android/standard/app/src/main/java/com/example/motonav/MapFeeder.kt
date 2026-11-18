@@ -105,6 +105,7 @@ object MapFeeder {
     private var chunkCy = 0.0
     @Volatile var userZoom = 0.70
         private set
+    @Volatile private var pendingZoomFetch = false
     private var nackCount = 0
 
     // 蓝牙地图块传输与带宽统计（用于评估压缩率、实测吞吐与高速切块冗余）
@@ -127,14 +128,23 @@ object MapFeeder {
         if (!enabled || routeOnly() || satMode()) return
 
         // 缩放跨越了精细/宏观门限（例如由 0.7x 缩小至 0.2x/0.1x，或由 0.1x 放大回 0.7x）：
-        // 即使当前车辆静止未移动，只要链路空闲，立即重新拉取对应层级的底图填补视野！
-        if (newHalf != oldHalf && havePose && frame != null) {
-            handler.post {
-                if (!fetching && (!haveChunk || chunkAcked)) {
-                    val f = frame ?: return@post
-                    status = if (newHalf > HALF) "切换到 7.2km 宏观大视野底图…" else "切换到标准精细底图…"
-                    fetchChunk(f, poseX, poseY)
-                }
+        // 无论当前车辆是否在行驶，只要跨越门限立即标记并尽速拉取对应层级的底图填补视野！
+        if (newHalf != oldHalf) {
+            pendingZoomFetch = true
+            triggerPendingZoomFetchIfReady()
+        }
+    }
+
+    private fun triggerPendingZoomFetchIfReady() {
+        if (!pendingZoomFetch || !havePose || frame == null) return
+        handler.post {
+            if (!pendingZoomFetch || !havePose || frame == null) return@post
+            if (!fetching && (!haveChunk || chunkAcked)) {
+                val f = frame ?: return@post
+                val targetHalf = desiredHalf(userZoom, satMode())
+                pendingZoomFetch = false
+                status = if (targetHalf > HALF) "切换到 7.2km 宏观大视野底图…" else "切换到标准精细底图…"
+                fetchChunk(f, poseX, poseY)
             }
         }
     }
@@ -507,12 +517,14 @@ object MapFeeder {
             offline.update(index)
             if (kotlin.math.hypot(x-onRoute.x,y-onRoute.y)<400) target=offline.plan.nodes[index]
         }
-        val wanted=target
         val wantedHalf = desiredHalf(userZoom, sat)
+        // 宏观大视野（0.1x~0.2x）按车辆当前视野全局对称截取覆盖，不锁死在 2.4km 路线离线节点
+        val wanted = if (wantedHalf <= HALF) target else null
         val levelMismatch = haveChunk && (chunkType == TYPE_RASTER) && (kotlin.math.abs(chunkHalf - wantedHalf) > 100)
         val needs=levelMismatch || (if (wanted!=null) !haveChunk || chunkType!=TYPE_RASTER ||
             kotlin.math.abs(wanted.x-chunkCx)>1 || kotlin.math.abs(wanted.y-chunkCy)>1
             else !haveChunk || MapCoveragePolicy.shouldRefresh(x-cx,y-cy,bearing,kmh,sat,basePreparationSeconds(),half,userZoom))
+        if (pendingZoomFetch) triggerPendingZoomFetchIfReady()
         // 已发出的普通图必须完整确认；下载后续地图不能冲掉正在传输的数据。
         if (!fetching && (!haveChunk || chunkAcked) && needs && (lastFetchFail==0L || now()-lastFetchFail>5000)) {
             val a=Math.toRadians(bearing.toDouble())
@@ -566,7 +578,7 @@ object MapFeeder {
             // 1. 高德普通底图
             if (serial == requestSerial && !routeOnly() && bytes == null && src == SRC_AMAP && c != null && !sat) {
                 try {
-                    val cached=if (offlineNode!=null) offline?.read(offlineNode) ?: offline?.readBase(offlineNode) else null
+                    val cached=if (offlineNode!=null && rasterHalf <= HALF) offline?.read(offlineNode) ?: offline?.readBase(offlineNode) else null
                     val r = if (cached!=null) RasterResult(cached,0,0,null,null) else {
                         capturing = true
                         try {
@@ -819,8 +831,12 @@ object MapFeeder {
                     return@post
                 }
                 status = "圆屏已收到普通底图"
+                if (pendingZoomFetch) {
+                    triggerPendingZoomFetchIfReady()
+                    return@post
+                }
                 // 规划页停车等待时也能接着准备起点底图，不依赖下一次行驶定位。
-                val maps=offlineMaps
+                val maps = if (desiredHalf(userZoom, satMode()) <= HALF) offlineMaps else null
                 if (maps!=null && enabled && !fetching) {
                     val progress=if (havePose) maps.plan.progress(poseX,poseY,routeProgress) else 0.0
                     val point=maps.plan.at(progress)

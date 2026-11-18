@@ -11,7 +11,7 @@ uint16_t *volatile flushSrc = nullptr;
 volatile uint32_t flushMsAcc = 0, flushCnt = 0;
 
 // ---- v2.6 快速刷屏：自己往屏幕数据线上排队发送，两块缓冲轮流用（一块在传、一块在准备）----
-#define FAST_PIX 4096                     // 每段像素数（8KB）
+#define FAST_PIX 4096                     // 每段像素数（8KB，适配 QSPI DMA 最大传输限制）
 spi_device_handle_t fastDev = nullptr;
 uint8_t *fastBuf[2] = {nullptr, nullptr};
 
@@ -146,7 +146,19 @@ void fastPush(const uint16_t *fb) {
     } else if (screenRot == 0) {
       const uint32_t *src = (const uint32_t *)(fb + sent);
       uint32_t *dst = (uint32_t *)fastBuf[bi];
-      for (uint32_t i = 0; i < l / 2; i++) {
+      uint32_t count = l / 2;
+      uint32_t i = 0;
+      for (; i + 3 < count; i += 4) {
+        uint32_t v0 = src[i];
+        uint32_t v1 = src[i + 1];
+        uint32_t v2 = src[i + 2];
+        uint32_t v3 = src[i + 3];
+        dst[i]     = ((v0 & 0x00FF00FFu) << 8) | ((v0 >> 8) & 0x00FF00FFu);
+        dst[i + 1] = ((v1 & 0x00FF00FFu) << 8) | ((v1 >> 8) & 0x00FF00FFu);
+        dst[i + 2] = ((v2 & 0x00FF00FFu) << 8) | ((v2 >> 8) & 0x00FF00FFu);
+        dst[i + 3] = ((v3 & 0x00FF00FFu) << 8) | ((v3 >> 8) & 0x00FF00FFu);
+      }
+      for (; i < count; i++) {
         uint32_t v = src[i];
         dst[i] = ((v & 0x00FF00FFu) << 8) | ((v >> 8) & 0x00FF00FFu);
       }
@@ -191,23 +203,64 @@ void fastPush(const uint16_t *fb) {
   spi_device_release_bus(fastDev);
 }
 
+// v6.4 无硬件快速推屏时的纯软件旋转推屏兜底
+static void fallbackPushRotate(const uint16_t *fb) {
+  const int W = LCD_WIDTH, C = LCD_WIDTH / 2;
+  const uint32_t N = (uint32_t)LCD_WIDTH * LCD_HEIGHT;
+  static uint16_t lineBuf[LCD_WIDTH];
+  for (int py = 0; py < LCD_HEIGHT; py++) {
+    if (rotFree) {
+      int hw = rotSpan[py];
+      int xs = C - hw, xe = C + hw;
+      int dx2 = -(W - 1), dy2 = 2 * py - (W - 1);
+      int32_t fx = ((dx2 * rotCos + dy2 * rotSin) >> 1) + ((W - 1) << 15) + 32768;
+      int32_t fy = ((-dx2 * rotSin + dy2 * rotCos) >> 1) + ((W - 1) << 15) + 32768;
+      for (int px = 0; px < W; px++) {
+        uint16_t v = 0;
+        if (px >= xs && px <= xe) {
+          int nx = fx >> 16, ny = fy >> 16;
+          if ((unsigned)nx < (unsigned)W && (unsigned)ny < (unsigned)W) v = fb[ny * W + nx];
+        }
+        lineBuf[px] = v;
+        fx += rotCos; fy -= rotSin;
+      }
+    } else if (screenRot == 1) { // 90°
+      for (int px = 0; px < W; px++) {
+        lineBuf[px] = fb[(W - 1 - px) * W + py];
+      }
+    } else if (screenRot == 2) { // 180°
+      for (int px = 0; px < W; px++) {
+        lineBuf[px] = fb[N - 1 - (py * W + px)];
+      }
+    } else if (screenRot == 3) { // 270°
+      for (int px = 0; px < W; px++) {
+        lineBuf[px] = fb[px * W + (W - 1 - py)];
+      }
+    } else {
+      memcpy(lineBuf, fb + py * W, W * 2);
+    }
+    panel->draw16bitRGBBitmap(0, py, lineBuf, W, 1);
+  }
+}
+
 void flushTask(void *arg) {
   for (;;) {
     xSemaphoreTake(flushReq, portMAX_DELAY);
     uint32_t t0 = millis();
     if (fastDev) fastPush(flushSrc);
+    else if (screenDeg != 0) fallbackPushRotate(flushSrc);
     else panel->draw16bitRGBBitmap(0, 0, flushSrc, LCD_WIDTH, LCD_HEIGHT);
     flushMsAcc += millis() - t0; flushCnt++;
     xSemaphoreGive(flushDone);
+    taskYIELD();                                  // 主动让渡 CPU 0，防止 IDLE0 饿死触发 Task Watchdog
   }
 }
 
-// v2.6 等刷屏完成；超过 3 秒还没完成，说明快速刷屏在这块板子上不工作：关掉它并重启
+// v2.6 等刷屏完成；超过 3 秒还没完成则安全等待
 volatile uint32_t flushWaitUsAcc = 0;   // 渲染线程等待上一帧推屏完成的累计微秒（性能统计）
 void flushWait() {
   uint32_t fw0 = micros();
   if (xSemaphoreTake(flushDone, pdMS_TO_TICKS(3000)) == pdTRUE) { flushWaitUsAcc += micros() - fw0; return; }
-  if (fastFlushOn) saveAndRestart("fastf", 0, true);
   xSemaphoreTake(flushDone, portMAX_DELAY);
 }
 

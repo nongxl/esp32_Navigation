@@ -1463,6 +1463,15 @@ void sendPendingAck() {
     txChar->notify();
     pendingBat = "";
   }
+  static unsigned long lastZoomSyncAt = 0;
+  if (mapModeActive() && pendingEvt.length() == 0 && (millis() - lastZoomSyncAt > 3500)) {
+    bool macroWanted = (userMapScale < 0.25f);
+    bool macroHave = (rasMpp > 4.0f && rasterValid);
+    if (rasterValid && (macroWanted != macroHave)) {
+      lastZoomSyncAt = millis();
+      pendingEvt = "T,ZOOM," + String((int)lroundf(userMapScale * 100.0f));
+    }
+  }
   if (pendingEvt.length()) {                          // v5.2 触摸事件
     txChar->setValue((uint8_t *)pendingEvt.c_str(), pendingEvt.length());
     txChar->notify();

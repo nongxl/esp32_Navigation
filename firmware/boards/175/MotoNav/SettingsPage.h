@@ -312,15 +312,33 @@ void drawRotationCalibPage() {
   drawSettingsIcon(3, rightX + cardW / 2, botY + 26, 0xDEFB);
   drawAaString(rightX + cardW / 2, botY + 54, "AUTO SLEEP", 1.3f, 0.8f, 9.0f, 0x8C71, true);
 
-  // 2. 纯白基准十字线（白色水平线直径 + 垂直地面垂线半径，90 度垂直相交）
-  // 横跨屏幕的水平基准线：长度 466px，贯穿正中心 Y = CX，纯白色，线宽 2px
-  gfx->fillRect(0, CX - 1, LCD_WIDTH, 2, C_WHITE);
+  // 2. 纯白基准十字/T字线（根据当前平滑重力角度计算旋转端点并动态绘制，水平地平线 + 重力铅垂线）
+  float rad = autoRotAngleSmoothed * (float)M_PI / 180.0f;
+  float cosA = cosf(rad), sinA = sinf(rad);
 
-  // 垂直地面的线：长度 233px，从中心 (CX, CX) 垂直延伸至屏幕底部，纯白色，线宽 2px
-  gfx->fillRect(CX - 1, CX, 2, CX, C_WHITE);
+  // 水平地平基准线：贯穿屏幕中心
+  float hx0 = (float)CX - (float)CX * cosA;
+  float hy0 = (float)CX - (float)CX * sinA;
+  float hx1 = (float)CX + (float)CX * cosA;
+  float hy1 = (float)CX + (float)CX * sinA;
+  float hnx = -sinA, hny = cosA;
+  gfx->drawLine((int)lroundf(hx0 - hnx), (int)lroundf(hy0 - hny), (int)lroundf(hx1 - hnx), (int)lroundf(hy1 - hny), C_WHITE);
+  gfx->drawLine((int)lroundf(hx0), (int)lroundf(hy0), (int)lroundf(hx1), (int)lroundf(hy1), C_WHITE);
+  gfx->drawLine((int)lroundf(hx0 + hnx), (int)lroundf(hy0 + hny), (int)lroundf(hx1 + hnx), (int)lroundf(hy1 + hny), C_WHITE);
+
+  // 垂直地面的铅垂线：从中心垂直指向重力下方
+  float vx1 = (float)CX - (float)CX * sinA;
+  float vy1 = (float)CX + (float)CX * cosA;
+  float vnx = cosA, vny = sinA;
+  gfx->drawLine((int)lroundf((float)CX - vnx), (int)lroundf((float)CX - vny), (int)lroundf(vx1 - vnx), (int)lroundf(vy1 - vny), C_WHITE);
+  gfx->drawLine(CX, CX, (int)lroundf(vx1), (int)lroundf(vy1), C_WHITE);
+  gfx->drawLine((int)lroundf((float)CX + vnx), (int)lroundf((float)CX + vny), (int)lroundf(vx1 + vnx), (int)lroundf(vy1 + vny), C_WHITE);
+
+  // 垂线末端指示小圆点
+  aaDisc(vx1, vy1, 3.5f, C_WHITE);
 
   // 中心相交点纯白精致圆点
-  aaDisc((float)CX, (float)CX, 4.5f, C_WHITE);
+  aaDisc((float)CX, (float)CX, 5.0f, C_WHITE);
   aaDisc((float)CX, (float)CX, 2.0f, C_BLACK);
 
   // 3. 旋转角度数字显示：在水平线中间上方（纯白色大号抗锯齿平滑字体，带高对比半透明黑色底衬）
@@ -384,8 +402,6 @@ inline void settingsUpdateAutoRot() {
     while (autoRotAngleSmoothed >= 360.0f) autoRotAngleSmoothed -= 360.0f;
     while (autoRotAngleSmoothed < 0.0f) autoRotAngleSmoothed += 360.0f;
 
-    // 浮点连续旋转推屏，彻底消除整数阶梯卡顿
-    setScreenDegFloat(autoRotAngleSmoothed, false);
     drawRotationCalibPage();
   }
 }
@@ -516,6 +532,7 @@ void settingsPageTap(int x, int y) {
     setScreenDeg(finalDeg, true);
     CompanionMode::startVibration(70, 30);
     drawSettingsPage();
+    needFlush = true;
     return;
   }
 
@@ -580,6 +597,7 @@ void settingsPageTap(int x, int y) {
       settingsAutoRot = true;
       autoRotAngleSmoothed = (float)screenDeg;
       lastAutoRotCheck = 0;
+      setScreenDeg(0, false); // 校准模式下推屏保持基准正向，由 T 字参考线随动旋转指示重力
       drawRotationCalibPage();
       return;
     }

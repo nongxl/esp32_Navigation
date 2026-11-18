@@ -203,11 +203,52 @@ void fastPush(const uint16_t *fb) {
   spi_device_release_bus(fastDev);
 }
 
+// v6.4 无硬件快速推屏时的纯软件旋转推屏兜底
+static void fallbackPushRotate(const uint16_t *fb) {
+  const int W = LCD_WIDTH, C = LCD_WIDTH / 2;
+  const uint32_t N = (uint32_t)LCD_WIDTH * LCD_HEIGHT;
+  static uint16_t lineBuf[LCD_WIDTH];
+  for (int py = 0; py < LCD_HEIGHT; py++) {
+    if (rotFree) {
+      int hw = rotSpan[py];
+      int xs = C - hw, xe = C + hw;
+      int dx2 = -(W - 1), dy2 = 2 * py - (W - 1);
+      int32_t fx = ((dx2 * rotCos + dy2 * rotSin) >> 1) + ((W - 1) << 15) + 32768;
+      int32_t fy = ((-dx2 * rotSin + dy2 * rotCos) >> 1) + ((W - 1) << 15) + 32768;
+      for (int px = 0; px < W; px++) {
+        uint16_t v = 0;
+        if (px >= xs && px <= xe) {
+          int nx = fx >> 16, ny = fy >> 16;
+          if ((unsigned)nx < (unsigned)W && (unsigned)ny < (unsigned)W) v = fb[ny * W + nx];
+        }
+        lineBuf[px] = v;
+        fx += rotCos; fy -= rotSin;
+      }
+    } else if (screenRot == 1) { // 90°
+      for (int px = 0; px < W; px++) {
+        lineBuf[px] = fb[(W - 1 - px) * W + py];
+      }
+    } else if (screenRot == 2) { // 180°
+      for (int px = 0; px < W; px++) {
+        lineBuf[px] = fb[N - 1 - (py * W + px)];
+      }
+    } else if (screenRot == 3) { // 270°
+      for (int px = 0; px < W; px++) {
+        lineBuf[px] = fb[px * W + (W - 1 - py)];
+      }
+    } else {
+      memcpy(lineBuf, fb + py * W, W * 2);
+    }
+    panel->draw16bitRGBBitmap(0, py, lineBuf, W, 1);
+  }
+}
+
 void flushTask(void *arg) {
   for (;;) {
     xSemaphoreTake(flushReq, portMAX_DELAY);
     uint32_t t0 = millis();
     if (fastDev) fastPush(flushSrc);
+    else if (screenDeg != 0) fallbackPushRotate(flushSrc);
     else panel->draw16bitRGBBitmap(0, 0, flushSrc, LCD_WIDTH, LCD_HEIGHT);
     flushMsAcc += millis() - t0; flushCnt++;
     xSemaphoreGive(flushDone);
