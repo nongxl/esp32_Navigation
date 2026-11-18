@@ -14,22 +14,23 @@ public final class AmapSampleGrid {
             double north, double south, int size) {
         if (width <= 0 || height <= 0 || size <= 0 || pixels.length != width * height
                 || !Double.isFinite(left + top + right + bottom + north + south)
-                || left < 0 || top < 0 || right > width || bottom > height
+                || left < -6.0 || top < -6.0 || right > width + 6.0 || bottom > height + 6.0
                 || right <= left || bottom <= top || north <= south
                 || north >= 85 || south <= -85) {
             throw new IllegalArgumentException("截图没有完整覆盖地图范围");
         }
+        double safeLeft = Math.max(0.0, Math.min(width - 1.0, left));
+        double safeTop = Math.max(0.0, Math.min(height - 1.0, top));
+        double safeRight = Math.max(safeLeft + 1.0, Math.min((double) width, right));
+        double safeBottom = Math.max(safeTop + 1.0, Math.min((double) height, bottom));
         int[] cols = new int[size];
         int[] rows = new int[size];
         double mn = mercator(north), ms = mercator(south);
         for (int i = 0; i < size; i++) {
             double u = (i + 0.5) / size;
-            cols[i] = (int) Math.floor(left + u * (right - left));
+            cols[i] = Math.max(0, Math.min(width - 1, (int) Math.floor(safeLeft + u * (safeRight - safeLeft))));
             double lat = north + (south - north) * u;
-            rows[i] = (int) Math.floor(top + (mn - mercator(lat)) / (mn - ms) * (bottom - top));
-            if (cols[i] < 0 || cols[i] >= width || rows[i] < 0 || rows[i] >= height) {
-                throw new IllegalArgumentException("截图采样越界，保留旧地图");
-            }
+            rows[i] = Math.max(0, Math.min(height - 1, (int) Math.floor(safeTop + (mn - mercator(lat)) / (mn - ms) * (safeBottom - safeTop))));
         }
         int[] result = new int[size * size];
         for (int y = 0; y < size; y++) {

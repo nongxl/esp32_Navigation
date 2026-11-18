@@ -675,6 +675,9 @@ object MapFeeder {
                 if (b == null) {
                     lastFetchFail = now()
                     status = "地图下载失败（5 秒后重试）：$err"
+                    if (pendingZoomFetch) {
+                        handler.postDelayed({ triggerPendingZoomFetchIfReady() }, 5200)
+                    }
                     return@post
                 }
                 haveChunk = true
@@ -687,7 +690,7 @@ object MapFeeder {
                 chunkBuildingsComplete=false
                 baseBuildSeconds = ((now() - startedAt) / 1000.0).coerceIn(0.2, 60.0)
                 chunkType = type
-                chunkHalf = if (chunkSat) SAT_HALF else HALF
+                chunkHalf = if (chunkSat) SAT_HALF else rasterHalf
                 chunkAcked = false
                 status = "地图已下载" + (if (err.isNotEmpty()) "（$err）" else "")
                 chunkInfo = "地图块 #$chunkId：$info"
