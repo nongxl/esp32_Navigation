@@ -11,7 +11,7 @@ uint16_t *volatile flushSrc = nullptr;
 volatile uint32_t flushMsAcc = 0, flushCnt = 0;
 
 // ---- v2.6 快速刷屏：自己往屏幕数据线上排队发送，两块缓冲轮流用（一块在传、一块在准备）----
-#define FAST_PIX 16384                    // 每段像素数（扩大到32KB，大幅减少FreeRTOS任务切换与DMA中断次数，推屏时间成倍缩短）
+#define FAST_PIX 4096                     // 每段像素数（8KB，适配 QSPI DMA 最大传输限制）
 spi_device_handle_t fastDev = nullptr;
 uint8_t *fastBuf[2] = {nullptr, nullptr};
 
@@ -211,15 +211,15 @@ void flushTask(void *arg) {
     else panel->draw16bitRGBBitmap(0, 0, flushSrc, LCD_WIDTH, LCD_HEIGHT);
     flushMsAcc += millis() - t0; flushCnt++;
     xSemaphoreGive(flushDone);
+    taskYIELD();                                  // 主动让渡 CPU 0，防止 IDLE0 饿死触发 Task Watchdog
   }
 }
 
-// v2.6 等刷屏完成；超过 3 秒还没完成，说明快速刷屏在这块板子上不工作：关掉它并重启
+// v2.6 等刷屏完成；超过 3 秒还没完成则安全等待
 volatile uint32_t flushWaitUsAcc = 0;   // 渲染线程等待上一帧推屏完成的累计微秒（性能统计）
 void flushWait() {
   uint32_t fw0 = micros();
   if (xSemaphoreTake(flushDone, pdMS_TO_TICKS(3000)) == pdTRUE) { flushWaitUsAcc += micros() - fw0; return; }
-  if (fastFlushOn) saveAndRestart("fastf", 0, true);
   xSemaphoreTake(flushDone, portMAX_DELAY);
 }
 

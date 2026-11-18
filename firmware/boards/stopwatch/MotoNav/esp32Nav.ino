@@ -416,13 +416,14 @@ void setup() {
     bootBrand = BootAnimation::valid(pr.getInt("bootbrand", 0));
     destLoadFromNvs();
     hidMusicMode = pr.getBool("mediahid", false);
-    fastFlushOn = pr.getBool("fastf", true);
+    fastFlushOn = true;                                             // 强制开启快速推屏
     themeIdx = pr.getInt("maptheme", 1);
     if (themeIdx < 0 || themeIdx >= THEME_N) themeIdx = 1;
     userMapScale = pr.getFloat("mapzoom", 0.7f);
     if (userMapScale < 0.1f || userMapScale > 1.0f || isnan(userMapScale)) userMapScale = 0.7f;
     int savedBright = constrain(pr.getInt("brightness", 200), 5, 255);
     pr.end();
+    { Preferences pw; if (pw.begin("motonav", false)) { pw.putBool("fastf", true); pw.end(); } }
     if (qspiMHz != 40 && qspiMHz != 60 && qspiMHz != 80) qspiMHz = 80;
     if (!gfx->begin(qspiMHz * 1000000)) Serial.println("gfx->begin() failed!");
     panel->setBrightness(savedBright);

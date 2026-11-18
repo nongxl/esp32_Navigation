@@ -568,6 +568,7 @@ void helperLoop(void *) {
     if (helpFn) helpFn(helpY0, helpY1, 1);
     perf.rasHelpUs += micros() - hu0;
     xSemaphoreGive(helpDone);
+    taskYIELD();                                      // 主动让渡 CPU 0，防止 IDLE0 饿死触发 Task Watchdog
   }
 }
 
