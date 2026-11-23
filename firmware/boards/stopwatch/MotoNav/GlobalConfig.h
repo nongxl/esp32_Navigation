@@ -26,6 +26,7 @@ struct AlongPoiInfo {
 };
 AlongPoiInfo alongPoi;
 bool alongSearching = false;
+bool alongSearchRequested = false;
 unsigned long alongSearchUntil = 0;
 
 // ===== 阶段一特性：沿途极端天气智能预警 =====

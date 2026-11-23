@@ -385,16 +385,12 @@ void drawMusic() {
     gfx->fillRoundRect(barX, barY, fillW, barH, 4, 0x07FF); // C_CYAN
     gfx->fillCircle(barX + fillW, barY + barH / 2, 6, C_WHITE);
 
-    // 大号时间文字 (当前时间 / 总时长)
+    // 大号时间文字 (当前时间 / 总时长，极简扁平抗锯齿字体)
     char timeCur[16], timeTotal[16];
     formatMusicTime(curSec, timeCur, sizeof(timeCur));
     formatMusicTime(musicDuration, timeTotal, sizeof(timeTotal));
-    gfx->setTextColor(0xCE79);
-    gfx->setTextSize(2);
-    gfx->setCursor(barX, barY + barH + 6);
-    gfx->print(timeCur);
-    gfx->setCursor(barX + barW - 60, barY + barH + 6);
-    gfx->print(timeTotal);
+    smoothDrawText(SF16, timeCur, barX, barY + barH + 6, 0xCE79, 0, 0, false);
+    smoothDrawText(SF16, timeTotal, barX + barW, barY + barH + 6, 0xCE79, 2, 0, false);
   }
 
   // 7. 歌名与歌手 (下移至 Y: 322, 356)

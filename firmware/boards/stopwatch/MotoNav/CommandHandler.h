@@ -138,6 +138,7 @@ void handleText(const String &m) {
     arrivedBannerOn = false;
     alongPoi.active = false;
     alongSearching = false;
+    alongSearchRequested = false;
     if (fxOn && !fxWp) {
       // 目的地到达结算进行中：保留结算画面显示，仅重置底层导航后台数据，等待用户手动点击屏幕或按键退出！
       progReset();
@@ -165,7 +166,11 @@ void handleText(const String &m) {
     return;
   }
   if (m.startsWith("#QA,")) {
+    if (!alongSearchRequested && !alongSearching) {
+      return; // 用户未主动发起沿途查找，忽略任何被动/重放结果
+    }
     alongSearching = false;
+    alongSearchRequested = false;
     int c1 = m.indexOf(',');
     int c2 = m.indexOf(',', c1 + 1);
     int c3 = m.indexOf(',', c2 + 1);

@@ -666,7 +666,11 @@ object BleLink {
                 lastImg.clear()
                 imgQueue.clear()
             }
-            if (k != "P" && k != "#GB?" && !k.startsWith("DEST:")) lastState[k] = msg
+            // 一次性交互/提示指令（心跳、沿途搜结果 #QA、寻车信标 #PKB、选路浮层 #RP）不写入重连补发缓存
+            val isTransient = k == "P" || k == "#GB?" || k.startsWith("DEST:") ||
+                k == "#QA" || k == "#PKB" || k == "#RP" ||
+                msg.startsWith("#QA,") || msg.startsWith("#PKB,") || msg.startsWith("#RP,")
+            if (!isTransient) lastState[k] = msg
             enqueue(k, msg.toByteArray(Charsets.UTF_8))
         }
         pump()

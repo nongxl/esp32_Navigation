@@ -256,6 +256,10 @@ void dragAbort();
 void touchPoll() {
   static unsigned long lastPoll = 0;
   static bool calibTriggered = false;
+  static bool destDragging = false;
+  static int destDragStartY = 0;
+  static int destDragStartOff = 0;
+  static bool cruiseExitTriggered = false;
   unsigned long now = millis();
   if (!touchOK) return;
   // 纯 12ms 定时轮询：无论是否连接电脑、无论中断脚电平如何，均稳定高效响应
@@ -419,7 +423,47 @@ void touchPoll() {
       }
     }
 
-    // 导航/巡航模式下禁用地图页单指长按退出（防止与双击按住缩放手势冲突导致误停导航）
+    // 收藏列表抽屉：上下拖动平滑滚动
+    if (destSheetOpen && touchDown && !callOn && !pairOn) {
+      float vx = touchX1 - touchX0, vy = touchY1 - touchY0;
+      touchVectorToCanvas(vx, vy);
+      if (!destDragging && fabsf(vy) >= 12.0f) {
+        destDragging = true;
+        destDragStartY = (int)lroundf(vy);
+        destDragStartOff = destScrollOffset;
+      }
+      if (destDragging) {
+        int dy = (int)lroundf(vy) - destDragStartY;
+        int nextOff = constrain(destDragStartOff - dy, 0, destMaxScrollPx());
+        if (nextOff != destScrollOffset) {
+          destScrollOffset = nextOff;
+          refreshOverlayPage();
+        }
+        touchEat = true;
+      }
+    }
+
+    // 巡航模式：长按地图空白处 1.0 秒退出巡航模式（仅巡航态生效，避免与导航缩放冲突）
+    if (page == 0 && inNav && cruiseOn && touchDown && !callOn && !pairOn && !fxOn &&
+        !mapZoomActive && !destSheetOpen && !routePickerOpen && !arrivedBannerOn) {
+      if (abs(touchX1 - touchX0) < 35 && abs(touchY1 - touchY0) < 35) {
+        if (now - touchHoldAt >= 1000 && !cruiseExitTriggered) {
+          cruiseExitTriggered = true;
+          touchEat = true;
+          dragAbort();
+          CompanionMode::startVibration(140, 50);
+          if (txChar && bleConnected) {
+            txChar->setValue((uint8_t *)"T,EXIT_NAV", 10);
+            txChar->notify();
+          } else if (bleConnected) {
+            pendingEvt = "T,EXIT_NAV";
+          }
+          progReset();
+          resetNavState();
+          drawWaiting(bleConnected ? WAIT_READY : WAIT_NOLINK);
+        }
+      }
+    }
 
     if (page == 0 && mapZoomActive) {
       touchEat = true;
@@ -448,6 +492,8 @@ void touchPoll() {
     unsigned long pressDuration = now - touchHoldAt;
     touchHoldAt = 0;
     calibTriggered = false;
+    destDragging = false;
+    cruiseExitTriggered = false;
     if (page == 0 && mapZoomActive) {
       mapZoomActive = false;
       touchEat = true;
@@ -566,13 +612,14 @@ void touchPoll() {
       if (destSheetOpen && destSheetTap(canvasX, canvasY)) { dragAbort(); touchEat = false; return; }
       if (alongPoiTap(canvasX, canvasY)) { dragAbort(); touchEat = false; return; }
 
-      // 2. 导航中或巡航模式轻触空白处：底部浮现五角星按钮；点击五角星展开收藏与沿途查找抽屉
+      // 2. 导航中或巡航模式轻触空白处：9点方向浮现主题收藏按钮；点击展开收藏与沿途查找抽屉
       if (page == 0 && inNav && abs(touchX1 - touchX0) < 36 && abs(touchY1 - touchY0) < 36) {
         if (now < navStarUntil) {
-          int sdx = canvasX - CX;
-          int sdy = canvasY - 388;
-          if (sdx * sdx + sdy * sdy <= 42 * 42) {
+          int sdx = canvasX - 52;
+          int sdy = canvasY - CX;
+          if (sdx * sdx + sdy * sdy <= 44 * 44) {
             CompanionMode::startVibration(55, 22);
+            destScrollOffset = 0;
             destSheetOpen = true;
             navStarUntil = 0;
             if (bleConnected) pendingEvt = "T,DEST_Q";

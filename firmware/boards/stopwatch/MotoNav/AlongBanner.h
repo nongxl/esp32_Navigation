@@ -9,6 +9,7 @@ inline void drawAlongPoiBanner(unsigned long t = millis()) {
   if (alongSearching) {
     if (t > alongSearchUntil) {
       alongSearching = false;
+      alongSearchRequested = false;
       return;
     }
     const int W = 220, H = 32, Y = 68;
@@ -110,6 +111,7 @@ inline bool alongPoiTap(int x, int y) {
 
 // 主动发起沿途加油站搜索
 inline void triggerAlongGasSearch() {
+  alongSearchRequested = true;
   alongSearching = true;
   alongSearchUntil = millis() + 6500;
   alongPoi.active = false;

@@ -928,8 +928,10 @@ void drawRasterMap(float cx, float cy, float sc, float cs, float sn) {
     for (int i = 0; i < 16; i++) RM.backPal[i] = (themeIdx != 0 && nightOn) ? blendF(rasterBackPal[i], C_BLACK, 110) : rasterBackPal[i];
   }
   if (styleIdx() == ST_MINIMAL) {
-    for (int i=0;i<16;i++) RM.pal[i]=0x0000;
-    RM.pal[1]=0x8410; // independent monochrome road mask; no building/park/water layer
+    for (int i = 0; i < 16; i++) RM.pal[i] = C_BLOCK;
+    RM.pal[1] = C_ROADM;                                               // 次干道/支路
+    RM.pal[2] = C_PARK;                                                // 低对比微块（公园/水系/城市块）
+    RM.pal[3] = nightOn ? C_MINIMAL_MAJOR_NIGHT : C_MINIMAL_MAJOR_DAY; // 主干道/高速
   }
   RM.pix2 = styleIdx() == ST_PIXEL;
   RM.cx = cx; RM.cy = cy; RM.sc = sc; RM.cs = cs; RM.sn = sn;
@@ -2060,14 +2062,10 @@ void capLine(int y, int thick, uint16_t c) {
   }
 }
 
-// v2.8 带黑色描边的文字（直接浮在地图上）
+// v2.8 带黑色描边的文字（直接浮在地图上，极简扁平抗锯齿字体）
 void printOutlined(const String &t, int x, int y, int size, uint16_t col) {
   int o = size >= 3 ? 2 : 1;
-  // v5.8 只画最外一圈偏移（字的笔画至少 o 像素粗，里面那圈会被盖住，画了也白画）
-  for (int dy = -o; dy <= o; dy++)
-    for (int dx = -o; dx <= o; dx++)
-      if ((dx || dy) && (o < 2 || abs(dx) == o || abs(dy) == o)) printCentered(t, x + dx, y + dy, size, C_BLACK);
-  printCentered(t, x, y, size, col);
+  smoothDrawTextOutlined(smoothFontForLegacySize(size), t.c_str(), x, y, col, C_BLACK, 1, 0, o);
 }
 
 // 把一块区域调暗（半透明深色底），a = 保留多少原来的亮度（0~255）
@@ -2085,20 +2083,20 @@ void dimRect(int x, int y, int w, int h, int r, int keep) {
   }
 }
 
-// 车速（浮在顶部）+ 测速牌
+// 车速（浮在顶部，大号 SF40 扁平抗锯齿字体）+ 测速牌
 void drawMapSpeed(bool over) {
   if (speedKmh < 0) return;
-  int sx = hasCam ? CX - 40 : CX;
-  printOutlined(String(speedKmh), sx, 44, 4, over ? C_RED : TH.hud);
-  printOutlined("km/h", sx, 80, 1, over ? 0xFC10 : TH.hud);
+  int sx = hasCam ? CX - 44 : CX;
+  printOutlined(String(speedKmh), sx, 34, 5, over ? C_RED : TH.hud);
+  printOutlined("km/h", sx, 76, 1, over ? 0xFC10 : TH.hud);
   if (hasCam) {
-    const int bx = CX + 52, by = 60;
+    const int bx = CX + 56, by = 60;
     aaDisc(bx, by, 27, C_BLACK);
     aaDisc(bx, by, 25, C_SIGNRED);
     aaDisc(bx, by, 19, C_WHITE);
     String lim = String(camLimit);
     int sz = lim.length() >= 3 ? 2 : 3;
-    printCentered(lim, bx, by - 4 * sz, sz, C_BLACK);
+    smoothDrawText(smoothFontForLegacySize(sz), lim.c_str(), bx, by, C_BLACK, 1, 1, false);
     printOutlined(distText(camDist), bx, by + 31, 2, over ? 0xFC10 : C_WHITE);
   }
 }
@@ -3193,7 +3191,9 @@ void drawMapFrame() {
     } else {
       int c = cls & 0x7F;
       if (c < 1 || c > 5) c = 5;
-      mapPolyline(tmpX, tmpY, np, fmaxf(2.0f, roadW[c] * wk), C_ROADM, false);
+      uint16_t rc = (styleIdx() == ST_MINIMAL && c <= 2)
+        ? (nightOn ? C_MINIMAL_MAJOR_NIGHT : C_MINIMAL_MAJOR_DAY) : C_ROADM;
+      mapPolyline(tmpX, tmpY, np, fmaxf(2.0f, roadW[c] * wk), rc, false);
     }
   }
   {                                                     // v6.1 风格特效（画在路线下面）

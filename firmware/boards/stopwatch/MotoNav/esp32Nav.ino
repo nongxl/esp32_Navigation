@@ -317,6 +317,7 @@ bool fastFlushOn = true;          // v2.6 快速刷屏
 
 #include "DisplayDriver.h"
 
+#include "SmoothFont.h"
 #include "NavWidgets.h"
 #include "UiModern.h"
 

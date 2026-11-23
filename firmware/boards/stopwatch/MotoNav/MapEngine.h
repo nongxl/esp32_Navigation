@@ -629,8 +629,122 @@ static inline uint8_t sampleRasterIdxSafe(int32_t ui, int32_t vi, bool useBack, 
   return 0;
 }
 
-// 双线性滤波采样指定单块（边界像素采用夹紧回退，彻底消除边缘 1px 暗线）
-static inline uint16_t sampleSingleBilinear(int32_t U, int32_t V, const uint16_t *pal, bool isBack) {
+// 快速读取 16x16 瓦片内指定源像素（调用方保证坐标合法）
+static inline uint8_t rasReadFast(const uint8_t *buf, int bw, int32_t x, int32_t y) {
+  uint32_t k = ((uint32_t)((y >> 4) * bw + (x >> 4)) << 8) | ((y & 15) << 4) | (x & 15);
+  uint8_t b = buf[k >> 1];
+  return (k & 1) ? (b >> 4) : (b & 15);
+}
+
+// 4x4 局部光滑等值线（Smooth-Isocontour SDF）解析抗锯齿核心：
+// 用 [1,2,1; 2,6,2; 1,2,1] 核将离散阶梯重构为连续斜坡，再按局部梯度将等值线映射为 ~1.15px 锐利矢量过渡带
+static inline uint16_t sampleSmoothEdgeCore(const uint8_t m[16], uint32_t ax, uint32_t ay,
+                                            uint16_t colA, uint16_t colB, int32_t edgeGain) {
+  auto conv = [&](int r, int c) -> int32_t {
+    const uint8_t *p0 = m + (r - 1) * 4 + c;
+    const uint8_t *p1 = p0 + 4;
+    const uint8_t *p2 = p1 + 4;
+    return (int32_t)p0[-1] + ((int32_t)p0[0] << 1) + (int32_t)p0[1]
+         + ((int32_t)p1[-1] << 1) + (int32_t)p1[0] * 6 + ((int32_t)p1[1] << 1)
+         + (int32_t)p2[-1] + ((int32_t)p2[0] << 1) + (int32_t)p2[1];
+  };
+  int32_t s00 = conv(1, 1);
+  int32_t s10 = conv(1, 2);
+  int32_t s01 = conv(2, 1);
+  int32_t s11 = conv(2, 2);
+
+  int32_t iax = (int32_t)ax, iay = (int32_t)ay;
+  int32_t top = s00 * (32 - iax) + s10 * iax;
+  int32_t bot = s01 * (32 - iax) + s11 * iax;
+  int32_t S   = top * (32 - iay) + bot * iay;        // 0..18432，等值线中点 = 9216
+
+  int32_t gx = (s10 - s00) * (32 - iay) + (s11 - s01) * iay;
+  int32_t gy = (s01 - s00) * (32 - iax) + (s11 - s10) * iax;
+  int32_t agx = gx < 0 ? -gx : gx;
+  int32_t agy = gy < 0 ? -gy : gy;
+  int32_t grad32 = (agx > agy) ? (agx + ((agy * 13) >> 5)) : (agy + ((agx * 13) >> 5));
+
+  int32_t alpha;
+  if (grad32 >= 24) {
+    alpha = 128 + ((S - 9216) * edgeGain) / (grad32 << 5);
+  } else {
+    alpha = (S * 256) / 18432;
+  }
+  if (alpha <= 0) return colA;
+  if (alpha >= 256) return colB;
+  return blendF(colA, colB, (uint32_t)alpha);
+}
+
+// 检测 2x2 边界是否为双材质并执行快速 4x4 矢量轮廓重构（调用方保证 ui-1..ui+2, vi-1..vi+2 在块内）
+static inline bool trySmoothEdgeFast(const uint8_t *buf, int bw, int32_t ui, int32_t vi,
+                                     uint8_t i00, uint8_t i10, uint8_t i01, uint8_t i11,
+                                     uint32_t ax, uint32_t ay, const uint16_t *pal,
+                                     int32_t edgeGain, uint16_t &outCol) {
+  uint8_t cA = i00;
+  uint8_t cB = (i10 != cA) ? i10 : ((i01 != cA) ? i01 : i11);
+  if ((i10 != cA && i10 != cB) || (i01 != cA && i01 != cB) || (i11 != cA && i11 != cB)) {
+    return false;                                    // 三色及以上交点回退普通双线性
+  }
+  uint8_t m[16];
+  int lx = ui & 15, ly = vi & 15;
+  if (lx >= 1 && lx <= 13 && ly >= 1 && ly <= 13) {
+    // 快速内块路径：4x4 全部位于同一个 16x16 瓦片内，直接命中 L1 缓存
+    const uint8_t *blk = buf + (((size_t)(vi >> 4) * bw + (ui >> 4)) << 7);
+    for (int r = 0; r < 4; r++) {
+      const uint8_t *rowP = blk + ((ly - 1 + r) << 3);
+      for (int c = 0; c < 4; c++) {
+        int colX = lx - 1 + c;
+        uint8_t b = rowP[colX >> 1];
+        uint8_t idx = (colX & 1) ? (b >> 4) : (b & 15);
+        m[(r << 2) | c] = (idx == cB) ? 1 : 0;
+      }
+    }
+  } else {
+    for (int r = 0; r < 4; r++) {
+      int32_t y = vi - 1 + r;
+      for (int c = 0; c < 4; c++) {
+        m[(r << 2) | c] = (rasReadFast(buf, bw, ui - 1 + c, y) == cB) ? 1 : 0;
+      }
+    }
+  }
+  outCol = sampleSmoothEdgeCore(m, ax, ay, pal[cA], pal[cB], edgeGain);
+  return true;
+}
+
+// 慢速路径（块边缘/上一块羽化区）双材质 4x4 矢量轮廓重构
+static inline bool trySmoothEdgeSafe(int32_t ui, int32_t vi, bool isBack,
+                                     uint8_t i00, uint8_t i10, uint8_t i01, uint8_t i11,
+                                     uint32_t ax, uint32_t ay, const uint16_t *pal,
+                                     int32_t edgeGain, uint16_t &outCol) {
+  uint8_t cA = i00;
+  uint8_t cB = (i10 != cA) ? i10 : ((i01 != cA) ? i01 : i11);
+  if ((i10 != cA && i10 != cB) || (i01 != cA && i01 != cB) || (i11 != cA && i11 != cB)) {
+    return false;
+  }
+  int32_t maxW = isBack ? (int32_t)rasterBackHeader.width - 1 : (int32_t)rasW - 1;
+  int32_t maxH = isBack ? (int32_t)rasterBackHeader.height - 1 : (int32_t)rasH - 1;
+  uint8_t m[16];
+  for (int r = 0; r < 4; r++) {
+    int32_t y = vi - 1 + r;
+    if (y < 0) y = 0;
+    else if (y > maxH) y = maxH;
+    for (int c = 0; c < 4; c++) {
+      int32_t x = ui - 1 + c;
+      if (x < 0) x = 0;
+      else if (x > maxW) x = maxW;
+      uint8_t idx = cA;
+      if (isBack) rasterRead(rasterBackBuf, rasterBackHeader, x, y, idx);
+      else sampleCurIdx(x, y, idx);
+      m[(r << 2) | c] = (idx == cB) ? 1 : 0;
+    }
+  }
+  outCol = sampleSmoothEdgeCore(m, ax, ay, pal[cA], pal[cB], edgeGain);
+  return true;
+}
+
+// 双线性滤波采样指定单块（放大索引底图时自动启用局部矢量轮廓重构，彻底消除边缘锯齿）
+static inline uint16_t sampleSingleBilinear(int32_t U, int32_t V, const uint16_t *pal, bool isBack,
+                                            bool smoothEdge = false, int32_t edgeGain = 0) {
   int32_t ui = U >> 16, vi = V >> 16;
   uint8_t i00 = 0, i10 = 0, i01 = 0, i11 = 0;
   if (isBack) {
@@ -646,6 +760,12 @@ static inline uint16_t sampleSingleBilinear(int32_t U, int32_t V, const uint16_t
   }
   if (i00 == i10 && i00 == i01 && i00 == i11) return pal[i00];
   uint32_t ax = (U >> 11) & 31, ay = (V >> 11) & 31;
+  if (smoothEdge) {
+    uint16_t smoothCol;
+    if (trySmoothEdgeSafe(ui, vi, isBack, i00, i10, i01, i11, ax, ay, pal, edgeGain, smoothCol)) {
+      return smoothCol;
+    }
+  }
   uint32_t c00 = rasRgbSpread(pal[i00]), c10 = rasRgbSpread(pal[i10]);
   uint32_t c01 = rasRgbSpread(pal[i01]), c11 = rasRgbSpread(pal[i11]);
   uint32_t top = ((c00 * (32 - ax) + c10 * ax) >> 5) & 0x07E0F81Fu;
@@ -657,7 +777,9 @@ static inline uint16_t sampleSingleBilinear(int32_t U, int32_t V, const uint16_t
 // 高性能定点双线性滤波 + 跨块 8px（16米）紧凑 Smoothstep 交界渐变羽化融合：
 // 既消除拼接割裂硬线，又彻底杜绝 32px 超宽融合产生的两条半透明重影与调色板脏色撕裂
 // backU16 / backV16 为 16 位定点数（Q16），支持高精度亚像素无缝贴合
-static inline uint16_t sampleRasterBilinear(int32_t U, int32_t V, const uint16_t *pal, bool useBack, int32_t backU16, int32_t backV16) {
+static inline uint16_t sampleRasterBilinear(int32_t U, int32_t V, const uint16_t *pal, bool useBack,
+                                            int32_t backU16, int32_t backV16,
+                                            bool smoothEdge = false, int32_t edgeGain = 0) {
   int32_t ui = U >> 16, vi = V >> 16;
   bool inCur = ((uint32_t)ui < (uint32_t)rasW && (uint32_t)vi < (uint32_t)rasH);
   if (!inCur) {
@@ -666,13 +788,13 @@ static inline uint16_t sampleRasterBilinear(int32_t U, int32_t V, const uint16_t
       int32_t bui = Uback >> 16, bvi = Vback >> 16;
       if ((uint32_t)bui < (uint32_t)rasterBackHeader.width && (uint32_t)bvi < (uint32_t)rasterBackHeader.height) {
         const uint16_t *bpal = RM.backHasPal ? RM.backPal : pal;
-        return sampleSingleBilinear(Uback, Vback, bpal, true);
+        return sampleSingleBilinear(Uback, Vback, bpal, true, smoothEdge && !RM.backHasPal, edgeGain);
       }
     }
     return pal[0];
   }
 
-  uint16_t colCur = sampleSingleBilinear(U, V, pal, false);
+  uint16_t colCur = sampleSingleBilinear(U, V, pal, false, smoothEdge, edgeGain);
   if (useBack) {
     int32_t edgeDist = min(min(ui, (int32_t)rasW - 1 - ui), min(vi, (int32_t)rasH - 1 - vi));
     if (edgeDist < 8) {
@@ -680,7 +802,7 @@ static inline uint16_t sampleRasterBilinear(int32_t U, int32_t V, const uint16_t
       int32_t bui = Uback >> 16, bvi = Vback >> 16;
       if ((uint32_t)bui < (uint32_t)rasterBackHeader.width && (uint32_t)bvi < (uint32_t)rasterBackHeader.height) {
         const uint16_t *bpal = RM.backHasPal ? RM.backPal : pal;
-        uint16_t colBack = sampleSingleBilinear(Uback, Vback, bpal, true);
+        uint16_t colBack = sampleSingleBilinear(Uback, Vback, bpal, true, smoothEdge && !RM.backHasPal, edgeGain);
         if (colBack != colCur) {
           uint32_t t = (uint32_t)((edgeDist + 1) * 256 / 9);
           uint32_t smooth = (t * t * (768 - 2 * t)) >> 16;
@@ -706,9 +828,14 @@ void rasterRows(int y0, int y1, int step) {
   const int backU = backU16 >> 16;
   const int backV = backV16 >> 16;
   const float R = 233.0f;
-  // 快速路径参数（见循环内）：安全边距——有上一块羽化时 8px（羽化带之外），否则 1px
-  const int fMargin = useBack ? 8 : 1;
-  const int fLimU = (int)rasW - 2 * fMargin - 1, fLimV = (int)rasH - 2 * fMargin - 1;
+  // 索引底图在接近 1:1 或放大时启用 4x4 局部光滑等值线矢量重构（卫星图/原版真彩图/像素风保持原采样）
+  const float pxPerSrc = sc * rasMpp;
+  const bool smoothEdge = !rasHasPal && !RM.pix2 && (pxPerSrc >= 0.85f);
+  const int32_t edgeGain = (int32_t)(pxPerSrc * (256.0f / 1.15f));
+  // 快速路径参数（见循环内）：安全边距——有上一块羽化时 8px；启用 4x4 轮廓重构时至少 2px 确保 ui-1..ui+2 不越界
+  const int fMargin = useBack ? 8 : (smoothEdge ? 2 : 1);
+  const int fLimU = (int)rasW - 2 * fMargin - (smoothEdge ? 2 : 1);
+  const int fLimV = (int)rasH - 2 * fMargin - (smoothEdge ? 2 : 1);
   const uint8_t *fBuf = rasterBuf;
   const int fBW = rasBW;
   const bool fastOK = !rasterViceValid && fBuf && fLimU > 0 && fLimV > 0;
@@ -739,7 +866,7 @@ void rasterRows(int y0, int y1, int step) {
         uint8_t idx = sampleRasterIdxSafe(ui, vi, useBack, backU, backV, usedBack);
         col = (usedBack && RM.backHasPal) ? RM.backPal[idx] : pal[idx];
       } else {
-        // 快速路径：2×2 邻域完全在当前块内且离块边足够远（无需上一块羽化）→ 无边界检查，全局量已提到局部
+        // 快速路径：邻域完全在当前块内且离块边足够远（无需上一块羽化）→ 无边界检查，全局量已提到局部
         int32_t ui = U >> 16, vi = V >> 16;
         if (fastOK && (uint32_t)(ui - fMargin) < (uint32_t)fLimU && (uint32_t)(vi - fMargin) < (uint32_t)fLimV) {
           uint32_t k00 = ((uint32_t)((vi >> 4) * fBW + (ui >> 4)) << 8) | ((vi & 15) << 4) | (ui & 15);
@@ -758,15 +885,17 @@ void rasterRows(int y0, int y1, int step) {
             col = pal[i00];
           } else {
             uint32_t ax = (U >> 11) & 31, ay = (V >> 11) & 31;
-            uint32_t c00 = rasRgbSpread(pal[i00]), c10 = rasRgbSpread(pal[i10]);
-            uint32_t c01 = rasRgbSpread(pal[i01]), c11 = rasRgbSpread(pal[i11]);
-            uint32_t top = ((c00 * (32 - ax) + c10 * ax) >> 5) & 0x07E0F81Fu;
-            uint32_t bot = ((c01 * (32 - ax) + c11 * ax) >> 5) & 0x07E0F81Fu;
-            uint32_t mm  = ((top * (32 - ay) + bot * ay) >> 5) & 0x07E0F81Fu;
-            col = (uint16_t)(mm | (mm >> 16));
+            if (!smoothEdge || !trySmoothEdgeFast(fBuf, fBW, ui, vi, i00, i10, i01, i11, ax, ay, pal, edgeGain, col)) {
+              uint32_t c00 = rasRgbSpread(pal[i00]), c10 = rasRgbSpread(pal[i10]);
+              uint32_t c01 = rasRgbSpread(pal[i01]), c11 = rasRgbSpread(pal[i11]);
+              uint32_t top = ((c00 * (32 - ax) + c10 * ax) >> 5) & 0x07E0F81Fu;
+              uint32_t bot = ((c01 * (32 - ax) + c11 * ax) >> 5) & 0x07E0F81Fu;
+              uint32_t mm  = ((top * (32 - ay) + bot * ay) >> 5) & 0x07E0F81Fu;
+              col = (uint16_t)(mm | (mm >> 16));
+            }
           }
         } else {
-          col = sampleRasterBilinear(U, V, pal, useBack, backU16, backV16);
+          col = sampleRasterBilinear(U, V, pal, useBack, backU16, backV16, smoothEdge, edgeGain);
         }
       }
       row[x] = col;
@@ -930,8 +1059,10 @@ void drawRasterMap(float cx, float cy, float sc, float cs, float sn) {
     for (int i = 0; i < 16; i++) RM.backPal[i] = (themeIdx != 0 && nightOn) ? blendF(rasterBackPal[i], C_BLACK, 110) : rasterBackPal[i];
   }
   if (styleIdx() == ST_MINIMAL) {
-    for (int i=0;i<16;i++) RM.pal[i]=0x0000;
-    RM.pal[1]=0x8410; // independent monochrome road mask; no building/park/water layer
+    for (int i = 0; i < 16; i++) RM.pal[i] = C_BLOCK;
+    RM.pal[1] = C_ROADM;                                               // 次干道/支路
+    RM.pal[2] = C_PARK;                                                // 低对比微块（公园/水系/城市块）
+    RM.pal[3] = nightOn ? C_MINIMAL_MAJOR_NIGHT : C_MINIMAL_MAJOR_DAY; // 主干道/高速
   }
   RM.pix2 = styleIdx() == ST_PIXEL;
   RM.cx = cx; RM.cy = cy; RM.sc = sc; RM.cs = cs; RM.sn = sn;
@@ -2080,14 +2211,10 @@ void capLine(int y, int thick, uint16_t c) {
   }
 }
 
-// v2.8 带黑色描边的文字（直接浮在地图上）
+// v2.8 带黑色描边的文字（直接浮在地图上，极简扁平抗锯齿字体）
 void printOutlined(const String &t, int x, int y, int size, uint16_t col) {
   int o = size >= 3 ? 2 : 1;
-  // v5.8 只画最外一圈偏移（字的笔画至少 o 像素粗，里面那圈会被盖住，画了也白画）
-  for (int dy = -o; dy <= o; dy++)
-    for (int dx = -o; dx <= o; dx++)
-      if ((dx || dy) && (o < 2 || abs(dx) == o || abs(dy) == o)) printCentered(t, x + dx, y + dy, size, C_BLACK);
-  printCentered(t, x, y, size, col);
+  smoothDrawTextOutlined(smoothFontForLegacySize(size), t.c_str(), x, y, col, C_BLACK, 1, 0, o);
 }
 
 // 把一块区域调暗（半透明深色底），a = 保留多少原来的亮度（0~255）
@@ -2105,20 +2232,20 @@ void dimRect(int x, int y, int w, int h, int r, int keep) {
   }
 }
 
-// 车速（浮在顶部）+ 测速牌
+// 车速（浮在顶部，大号 SF40 扁平抗锯齿字体）+ 测速牌
 void drawMapSpeed(bool over) {
   if (speedKmh < 0) return;
-  int sx = hasCam ? CX - 40 : CX;
-  printOutlined(String(speedKmh), sx, 44, 4, over ? C_RED : TH.hud);
-  printOutlined("km/h", sx, 80, 1, over ? 0xFC10 : TH.hud);
+  int sx = hasCam ? CX - 44 : CX;
+  printOutlined(String(speedKmh), sx, 34, 5, over ? C_RED : TH.hud);
+  printOutlined("km/h", sx, 76, 1, over ? 0xFC10 : TH.hud);
   if (hasCam) {
-    const int bx = CX + 52, by = 60;
+    const int bx = CX + 56, by = 60;
     aaDisc(bx, by, 27, C_BLACK);
     aaDisc(bx, by, 25, C_SIGNRED);
     aaDisc(bx, by, 19, C_WHITE);
     String lim = String(camLimit);
     int sz = lim.length() >= 3 ? 2 : 3;
-    printCentered(lim, bx, by - 4 * sz, sz, C_BLACK);
+    smoothDrawText(smoothFontForLegacySize(sz), lim.c_str(), bx, by, C_BLACK, 1, 1, false);
     printOutlined(distText(camDist), bx, by + 31, 2, over ? 0xFC10 : C_WHITE);
   }
 }
@@ -3213,7 +3340,9 @@ void drawMapFrame() {
     } else {
       int c = cls & 0x7F;
       if (c < 1 || c > 5) c = 5;
-      mapPolyline(tmpX, tmpY, np, fmaxf(2.0f, roadW[c] * wk), C_ROADM, false);
+      uint16_t rc = (styleIdx() == ST_MINIMAL && c <= 2)
+        ? (nightOn ? C_MINIMAL_MAJOR_NIGHT : C_MINIMAL_MAJOR_DAY) : C_ROADM;
+      mapPolyline(tmpX, tmpY, np, fmaxf(2.0f, roadW[c] * wk), rc, false);
     }
   }
   {                                                     // v6.1 风格特效（画在路线下面）

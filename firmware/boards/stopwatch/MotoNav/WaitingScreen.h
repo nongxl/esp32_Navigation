@@ -46,6 +46,51 @@ static inline void drawTextUTF8Center(int cx, int y, const char *str, uint16_t c
   drawTextUTF8(cx - w / 2, y, str, color);
 }
 
+static inline void drawTextUTF8Bold(int x, int y, const char *str, uint16_t color) {
+  drawTextUTF8(x, y, str, color);
+  drawTextUTF8(x + 1, y, str, color);
+}
+
+static inline void drawTextUTF8BoldCenter(int cx, int y, const char *str, uint16_t color) {
+  int w = getUTF8Width(str);
+  drawTextUTF8Bold(cx - w / 2, y, str, color);
+}
+
+// UTF-8 安全自动回行绘制（最多 2 行，绝不截断多字节汉字）
+static inline void drawTextUTF8Wrap2(int x, int y, int maxW, int lineH, const char *str, uint16_t color) {
+  if (!str || !str[0]) return;
+  char line1[96], line2[96];
+  int i = 0, w1 = 0, l1 = 0;
+  while (str[i]) {
+    uint8_t c = (uint8_t)str[i];
+    int clen = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
+    int cw = (c < 0x80) ? 8 : 16;
+    if (w1 + cw > maxW && l1 > 0) break;
+    if (l1 + clen >= (int)sizeof(line1) - 1) break;
+    for (int k = 0; k < clen && str[i]; k++) line1[l1++] = str[i++];
+    w1 += cw;
+  }
+  line1[l1] = '\0';
+  drawTextUTF8(x, y, line1, color);
+
+  if (!str[i]) return;
+  int w2 = 0, l2 = 0;
+  while (str[i]) {
+    uint8_t c = (uint8_t)str[i];
+    int clen = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
+    int cw = (c < 0x80) ? 8 : 16;
+    if (w2 + cw > maxW - 12 && l2 > 0) {
+      if (l2 + 3 < (int)sizeof(line2) - 1) { line2[l2++] = '.'; line2[l2++] = '.'; line2[l2++] = '.'; }
+      break;
+    }
+    if (l2 + clen >= (int)sizeof(line2) - 1) break;
+    for (int k = 0; k < clen && str[i]; k++) line2[l2++] = str[i++];
+    w2 += cw;
+  }
+  line2[l2] = '\0';
+  if (l2 > 0) drawTextUTF8(x, y + lineH, line2, color);
+}
+
 // 全局变量定义
 DestItem destItems[MAX_DEST_ITEMS];
 int destItemCount = 0;
@@ -102,142 +147,190 @@ static inline const char* getWdayStr(int w) {
   return "TUE";
 }
 
-// 绘制快捷沿途/周边服务矢量图标 (0=加油, 1=服务区, 2=维修, 3=洗手间)
+// 绘制快捷沿途/周边服务矢量图标（放大约 1.35x，清晰易辨）
 static void drawQuickPoiIcon(int cx, int cy, int kind, uint16_t col) {
   if (kind == 0) {
-    // 加油站：油机机身 + 屏幕 + 油管
-    gfx->fillRoundRect(cx - 7, cy - 8, 11, 15, 2, col);
-    gfx->fillRect(cx - 5, cy - 6, 7, 5, C_BLACK);
-    gfx->drawLine(cx + 4, cy - 5, cx + 8, cy - 1, col);
-    gfx->drawLine(cx + 8, cy - 1, cx + 8, cy + 5, col);
-    gfx->drawLine(cx + 6, cy + 5, cx + 8, cy + 5, col);
+    // 加油站：放大油机机身 + 屏幕 + 油管
+    gfx->fillRoundRect(cx - 10, cy - 11, 15, 21, 3, col);
+    gfx->fillRect(cx - 7, cy - 8, 9, 7, C_BLACK);
+    gfx->drawLine(cx + 5, cy - 7, cx + 11, cy - 2, col);
+    gfx->drawLine(cx + 6, cy - 7, cx + 12, cy - 2, col);
+    gfx->drawLine(cx + 11, cy - 2, cx + 11, cy + 7, col);
+    gfx->drawLine(cx + 12, cy - 2, cx + 12, cy + 7, col);
+    gfx->drawLine(cx + 8, cy + 7, cx + 11, cy + 7, col);
   } else if (kind == 1) {
-    // 服务区：人字屋顶 + P 字母
-    gfx->drawLine(cx - 10, cy - 1, cx, cy - 9, col);
-    gfx->drawLine(cx, cy - 9, cx + 10, cy - 1, col);
-    gfx->drawLine(cx - 7, cy - 1, cx - 7, cy + 7, col);
-    gfx->drawLine(cx + 7, cy - 1, cx + 7, cy + 7, col);
-    drawAaString(cx, cy + 3, "P", 1.25f, 0.8f, 8.0f, C_WHITE, true);
+    // 服务区：放大屋顶 + P 徽标
+    for (int d = 0; d <= 1; d++) {
+      gfx->drawLine(cx - 13, cy - 1 + d, cx, cy - 12 + d, col);
+      gfx->drawLine(cx, cy - 12 + d, cx + 13, cy - 1 + d, col);
+      gfx->drawLine(cx - 9 + d, cy - 1, cx - 9 + d, cy + 10, col);
+      gfx->drawLine(cx + 9 - d, cy - 1, cx + 9 - d, cy + 10, col);
+    }
+    smoothDrawText(SF16, "P", cx, cy + 4, C_WHITE, 1, 1, false);
   } else if (kind == 2) {
-    // 维修点：交叉扳手/工具
-    gfx->drawLine(cx - 7, cy - 7, cx + 7, cy + 7, col);
-    gfx->drawLine(cx - 6, cy - 7, cx + 8, cy + 7, col);
-    gfx->drawLine(cx + 7, cy - 7, cx - 7, cy + 7, col);
-    aaDisc(cx - 6, cy - 6, 3.0f, col);
-    aaDisc(cx + 6, cy + 6, 3.0f, col);
+    // 维修点：放大交叉扳手
+    for (int d = -1; d <= 1; d++) {
+      gfx->drawLine(cx - 9 + d, cy - 9, cx + 9 + d, cy + 9, col);
+      gfx->drawLine(cx + 9 + d, cy - 9, cx - 9 + d, cy + 9, col);
+    }
+    aaDisc(cx - 8, cy - 8, 4.0f, col);
+    aaDisc(cx + 8, cy + 8, 4.0f, col);
   } else {
-    // 洗手间：WC 徽标
-    drawAaString(cx, cy, "WC", 1.35f, 0.85f, 8.5f, col, true);
+    // 洗手间：放大 WC 徽标
+    smoothDrawText(SF22, "WC", cx, cy, col, 1, 1, false);
   }
 }
 
-// 导航/巡航态轻触屏幕空白处浮现的底部五角星按钮
+// 导航/巡航态轻触屏幕空白处浮现的 9 点方向主题收藏按钮
 void drawNavStarButton(unsigned long now) {
   if (!inNav || destSheetOpen || routePickerOpen || callOn || pairOn || arrivedBannerOn) return;
   if (now >= navStarUntil) return;
-  const int btnCY = 388;
-  drawTranslucentCircle(CX, btnCY, 30, 0x0000, 200);
-  gfx->drawCircle(CX, btnCY, 30, 0xFDE0);
-  gfx->drawCircle(CX, btnCY, 31, 0x4A69);
-  drawRockstarStar(CX, btnCY, 16.5f, 7.2f, C_WHITE, 0xFDE0);
+  const int btnCX = 52, btnCY = CX;
+  drawThemedFavIcon(btnCX, btnCY, 30, false);
 }
 
-// 绘制地点收藏与沿途快捷服务毛玻璃抽屉浮层（待机/巡航/导航通用）
+static inline int destMaxScrollPx() {
+  const int itemH = 82, itemGap = 10, viewH = 190;
+  int totalH = (destItemCount > 0) ? (destItemCount * (itemH + itemGap) - itemGap) : 0;
+  return max(0, totalH - viewH);
+}
+
+// 绘制地点收藏与沿途快捷服务毛玻璃抽屉浮层（支持上下滑动滚动、放大图标文字与地址回行）
 void drawDestinationsSheet() {
-  const int sheetW = 384;
-  const int sheetH = 356;
-  const int sheetX = CX - sheetW / 2; // 41
-  const int sheetY = CX - sheetH / 2; // 55
+  const int sheetW = 388;
+  const int sheetH = 368;
+  const int sheetX = CX - sheetW / 2; // 39
+  const int sheetY = CX - sheetH / 2; // 49
+  const int listTop = sheetY + 132;
+  const int listBot = sheetY + sheetH - 46;
+  const int listViewH = listBot - listTop; // 190
+
+  destInitDefaults();
+  int maxScr = destMaxScrollPx();
+  destScrollOffset = constrain(destScrollOffset, 0, maxScr);
 
   // 1. 半透明毛玻璃暗黑圆角底座
-  drawTranslucentRoundRect(sheetX, sheetY, sheetW, sheetH, 22, 0x0000, 238);
-  gfx->drawRoundRect(sheetX, sheetY, sheetW, sheetH, 22, 0x39E7);
+  drawTranslucentRoundRect(sheetX, sheetY, sheetW, sheetH, 22, 0x0000, 240);
 
-  // 2. 顶部标题栏
-  drawRockstarStar(sheetX + 26, sheetY + 26, 8.5f, 3.8f, 0xFDE0, 0xFDE0);
-  if (isChineseLang) {
-    drawTextUTF8(sheetX + 44, sheetY + 32, "收藏与沿途查找", C_WHITE);
-  } else {
-    drawAaString(sheetX + 120, sheetY + 26, "FAVORITES & POI", 1.7f, 0.95f, 11.0f, C_WHITE, true);
+  // 2. 可滚动常用收藏地点列表（先画列表，再由顶部标题栏与底部提示栏自然裁切遮罩，零溢出）
+  const int itemW = sheetW - 32; // 356 (右侧留出滚动条空间)
+  const int itemH = 82;
+  const int itemGap = 10;
+  const int itemX = sheetX + 14;
+
+  for (int i = 0; i < destItemCount; i++) {
+    int curY = listTop + i * (itemH + itemGap) - destScrollOffset;
+    if (curY + itemH <= listTop || curY >= listBot) continue;
+
+    drawTranslucentRoundRect(itemX, curY, itemW, itemH, 14, 0x10A2, 175);
+    gfx->drawRoundRect(itemX, curY, itemW, itemH, 14, 0x31A6);
+
+    // 放大左侧图标
+    if (destItems[i].type == 0) {
+      drawRockstarStar(itemX + 26, curY + itemH / 2, 12.0f, 5.0f, 0xFDE0, 0xFDE0, 0.4f);
+    } else {
+      aaDisc(itemX + 26, curY + itemH / 2 - 4, 8.0f, C_CYAN);
+      gfx->fillTriangle(itemX + 19, curY + itemH / 2 - 2,
+                        itemX + 33, curY + itemH / 2 - 2,
+                        itemX + 26, curY + itemH / 2 + 12, C_CYAN);
+      aaDisc(itemX + 26, curY + itemH / 2 - 4, 3.2f, C_BLACK);
+    }
+
+    // 放大右侧路况耗时徽章或箭头
+    bool hasCommute = (destItems[i].commuteMin > 0);
+    int textMaxW = hasCommute ? (itemW - 56 - 76) : (itemW - 56 - 28);
+
+    const char *name = destItems[i].name[0] ? destItems[i].name : (isChineseLang ? "未知地点" : "Unknown Location");
+    const char *addr = destItems[i].addr[0] ? destItems[i].addr : (isChineseLang ? "轻触规划路线" : "Tap to route");
+    drawTextUTF8Bold(itemX + 52, curY + 25, name, C_WHITE);
+    drawTextUTF8Wrap2(itemX + 52, curY + 47, textMaxW, 19, addr, 0x9CF3);
+
+    if (hasCommute) {
+      char tcBuf[16];
+      snprintf(tcBuf, sizeof(tcBuf), "%dm", destItems[i].commuteMin);
+      uint16_t tcCol = (destItems[i].trafficStatus >= 2) ? 0xF9A4 : (destItems[i].trafficStatus == 1) ? 0xFDE0 : 0x05E0;
+      drawTranslucentRoundRect(itemX + itemW - 70, curY + (itemH - 34) / 2, 60, 34, 10, tcCol, 150);
+      gfx->drawRoundRect(itemX + itemW - 70, curY + (itemH - 34) / 2, 60, 34, 10, tcCol);
+      smoothDrawText(SF22, tcBuf, itemX + itemW - 40, curY + itemH / 2, C_WHITE, 1, 1, false);
+    } else {
+      smoothDrawText(SF22, ">", itemX + itemW - 18, curY + itemH / 2, 0x6B4D, 1, 1, false);
+    }
   }
 
-  // 右上角关闭按钮 (✕)
-  drawTranslucentCircle(sheetX + sheetW - 26, sheetY + 26, 14, 0x2124, 160);
-  gfx->drawCircle(sheetX + sheetW - 26, sheetY + 26, 14, 0x4A69);
-  gfx->drawLine(sheetX + sheetW - 30, sheetY + 22, sheetX + sheetW - 22, sheetY + 30, C_WHITE);
-  gfx->drawLine(sheetX + sheetW - 22, sheetY + 22, sheetX + sheetW - 30, sheetY + 30, C_WHITE);
+  // 右侧纤细滚动条指示器（超出可视高度时显示）
+  if (maxScr > 0) {
+    int trackX = sheetX + sheetW - 10;
+    int trackY = listTop + 4;
+    int trackH = listViewH - 8;
+    gfx->fillRoundRect(trackX, trackY, 4, trackH, 2, 0x2104);
+    int totalH = destItemCount * (itemH + itemGap) - itemGap;
+    int thumbH = max(24, trackH * listViewH / max(1, totalH));
+    int thumbY = trackY + (trackH - thumbH) * destScrollOffset / maxScr;
+    gfx->fillRoundRect(trackX, thumbY, 4, thumbH, 2, 0x9CF3);
+  }
 
-  // 分隔线
-  gfx->drawLine(sheetX + 16, sheetY + 46, sheetX + sheetW - 16, sheetY + 46, 0x2945);
+  // 3. 顶部不透明遮罩 + 标题栏 + 4 个放大快捷服务按钮（盖住滚动越界部分）
+  gfx->fillRoundRect(sheetX, sheetY, sheetW, listTop - sheetY, 22, 0x0841);
+  gfx->fillRect(sheetX, sheetY + 22, sheetW, listTop - sheetY - 22, 0x0841);
 
-  // 3. 高德 SDK 沿途/周边快捷服务图标栏 (加油站 / 服务区 / 维修点 / 洗手间)
+  drawThemedFavIcon(sheetX + 28, sheetY + 30, 15, true);
+  if (isChineseLang) {
+    drawTextUTF8Bold(sheetX + 50, sheetY + 36, "收藏与沿途查找", C_WHITE);
+  } else {
+    smoothDrawText(SF22, "FAVORITES & POI", sheetX + 50, sheetY + 30, C_WHITE, 0, 1, false);
+  }
+
+  // 放大右上角关闭按钮 (半径 20，粗线条 ✕)
+  const int closeX = sheetX + sheetW - 30;
+  const int closeY = sheetY + 30;
+  gfx->fillCircle(closeX, closeY, 20, 0x2124);
+  gfx->drawCircle(closeX, closeY, 20, 0x6B4D);
+  for (int d = -1; d <= 1; d++) {
+    gfx->drawLine(closeX - 7 + d, closeY - 7, closeX + 7 + d, closeY + 7, C_WHITE);
+    gfx->drawLine(closeX + 7 + d, closeY - 7, closeX - 7 + d, closeY + 7, C_WHITE);
+  }
+
+  // 顶部 4 个沿途/周边快捷服务图标栏（放大）
   static const char *const qLabelsZh[4] = {"加油站", "服务区", "维修点", "洗手间"};
-  static const char *const qLabelsEn[4] = {"GAS", "SVC", "REPAIR", "WC"};
+  static const char *const qLabelsEn[4] = {"GAS", "SVC", "REP", "WC"};
   static const uint16_t qCols[4] = {0xFA60, 0x06BF, 0xFDE0, 0x3E7F};
-  const int qY = sheetY + 54;
-  const int qW = 83;
-  const int qH = 56;
+  const int qY = sheetY + 58;
+  const int qW = 84;
+  const int qH = 64;
   const int qGap = 8;
   const int qStartX = sheetX + 14;
 
   for (int k = 0; k < 4; k++) {
     int bx = qStartX + k * (qW + qGap);
-    drawTranslucentRoundRect(bx, qY, qW, qH, 12, 0x10A2, 185);
+    drawTranslucentRoundRect(bx, qY, qW, qH, 12, 0x10A2, 195);
     gfx->drawRoundRect(bx, qY, qW, qH, 12, qCols[k]);
-    drawQuickPoiIcon(bx + qW / 2, qY + 21, k, qCols[k]);
+    drawQuickPoiIcon(bx + qW / 2, qY + 23, k, qCols[k]);
     if (isChineseLang) {
-      drawTextUTF8Center(bx + qW / 2, qY + 49, qLabelsZh[k], C_WHITE);
+      drawTextUTF8BoldCenter(bx + qW / 2, qY + 55, qLabelsZh[k], C_WHITE);
     } else {
-      drawAaString(bx + qW / 2, qY + 44, qLabelsEn[k], 1.15f, 0.75f, 8.0f, C_WHITE, true);
+      smoothDrawText(SF16, qLabelsEn[k], bx + qW / 2, qY + 49, C_WHITE, 1, 1, false);
     }
   }
 
-  // 4. 常用收藏地点列表 (最多 3 项，为底部圆弧与快捷栏留足空间)
-  destInitDefaults();
-  int showCount = (destItemCount < 3) ? destItemCount : 3;
-  const int itemW = sheetW - 28; // 356
-  const int itemH = 58;
-  const int itemX = sheetX + 14;
-  int startY = sheetY + 120;
-
-  for (int i = 0; i < showCount; i++) {
-    int curY = startY + i * (itemH + 8);
-    drawTranslucentRoundRect(itemX, curY, itemW, itemH, 12, 0x10A2, 165);
-    gfx->drawRoundRect(itemX, curY, itemW, itemH, 12, 0x31A6);
-
-    if (destItems[i].type == 0) {
-      drawRockstarStar(itemX + 24, curY + itemH / 2, 8.0f, 3.5f, 0xFDE0, 0xFDE0);
-    } else {
-      aaDisc(itemX + 24, curY + itemH / 2 - 3, 5.0f, C_CYAN);
-      gfx->fillTriangle(itemX + 20, curY + itemH / 2 - 2,
-                        itemX + 28, curY + itemH / 2 - 2,
-                        itemX + 24, curY + itemH / 2 + 7, C_CYAN);
-      aaDisc(itemX + 24, curY + itemH / 2 - 3, 2.0f, C_BLACK);
-    }
-
-    const char *name = destItems[i].name[0] ? destItems[i].name : (isChineseLang ? "未知地点" : "Unknown Location");
-    const char *addr = destItems[i].addr[0] ? destItems[i].addr : (isChineseLang ? "轻触规划路线" : "Tap to route");
-    drawTextUTF8(itemX + 52, curY + 25, name, C_WHITE);
-    drawTextUTF8(itemX + 52, curY + 46, addr, 0x7BEF);
-
-    if (destItems[i].commuteMin > 0) {
-      char tcBuf[16];
-      snprintf(tcBuf, sizeof(tcBuf), "%dm", destItems[i].commuteMin);
-      uint16_t tcCol = (destItems[i].trafficStatus >= 2) ? 0xF9A4 : (destItems[i].trafficStatus == 1) ? 0xFDE0 : 0x05E0;
-      drawTranslucentRoundRect(itemX + itemW - 68, curY + 15, 52, 28, 8, tcCol, 140);
-      gfx->drawRoundRect(itemX + itemW - 68, curY + 15, 52, 28, 8, tcCol);
-      drawAaString(itemX + itemW - 42, curY + 29, tcBuf, 1.4f, 0.9f, 9.5f, C_WHITE, true);
-    } else {
-      drawAaString(itemX + itemW - 18, curY + itemH / 2, ">", 1.8f, 1.0f, 10.0f, 0x4A69, true);
-    }
-  }
-
-  // 底部提示
+  // 4. 底部不透明遮罩 + 两行精简提示（贴合圆屏底部弧度，减少宽度）
+  gfx->fillRect(sheetX, listBot, sheetW, sheetY + sheetH - listBot - 22, 0x0841);
+  gfx->fillRoundRect(sheetX, listBot, sheetW, sheetY + sheetH - listBot, 22, 0x0841);
+  gfx->drawFastHLine(sheetX + 16, listBot, sheetW - 32, 0x2945);
   if (isChineseLang) {
-    drawTextUTF8Center(CX, sheetY + sheetH - 12, inNav ? "快捷图标顺路加途经点 · 收藏一键换目的地" : "轻触地点在圆屏直接选路导航", 0x7BEF);
+    if (inNav) {
+      drawTextUTF8Center(CX, listBot + 19, "快捷图标顺路加途经点", 0x9CF3);
+      drawTextUTF8Center(CX, listBot + 38, "收藏地点一键换目的地", 0x7BEF);
+    } else {
+      drawTextUTF8Center(CX, listBot + 19, "轻触地点圆屏直接选路", 0x9CF3);
+      drawTextUTF8Center(CX, listBot + 38, "上下滑动查看更多收藏", 0x7BEF);
+    }
   } else {
-    drawAaString(CX, sheetY + sheetH - 16, "TAP PLACE TO PLAN ROUTE ON SCREEN", 1.1f, 0.7f, 8.0f, 0x4A69, true);
+    smoothDrawText(SF12, "TAP PLACE TO PLAN ROUTE", CX, listBot + 14, 0x9CF3, 1, 1, false);
+    smoothDrawText(SF12, "SWIPE UP/DOWN TO SCROLL", CX, listBot + 32, 0x7BEF, 1, 1, false);
   }
+
+  // 外框收边
+  gfx->drawRoundRect(sheetX, sheetY, sheetW, sheetH, 22, 0x39E7);
 }
 
 // 绘制圆屏端路线选择浮层（选择候选路线并一键开始导航）
@@ -370,32 +463,32 @@ void drawWaiting(int st) {
   // 1. 绘制正宗罪恶都市风格地图背景 (暖沙色街区、青绿水面、公园绿地、粉紫路线与车标，半透明暗化)
   drawThemedMapBackground();
 
-  // 2. 居中大时钟与日期毛玻璃半透明卡片 (整体上移至 60~190，尺寸放大为 280x130，时间字号放大为 5.2f！)
-  const int clockW = 280, clockH = 130;
+  // 2. 居中大时钟与纯数字日期毛玻璃半透明卡片（超大扁平时间 SF76 + 数字日期）
+  const int clockW = 296, clockH = 136;
   const int clockX = CX - clockW / 2;
-  const int clockY = 60;
-  drawTranslucentRoundRect(clockX, clockY, clockW, clockH, 22, 0x0000, 200);
-  gfx->drawRoundRect(clockX, clockY, clockW, clockH, 22, 0x39E7);
+  const int clockY = 56;
+  drawTranslucentRoundRect(clockX, clockY, clockW, clockH, 24, 0x0000, 200);
+  gfx->drawRoundRect(clockX, clockY, clockW, clockH, 24, 0x39E7);
 
   // 获取实时系统时间
   time_t nowSec = time(NULL);
   struct tm *t = localtime(&nowSec);
+  int year = t ? (t->tm_year + 1900) : 2026;
   int hour = t ? t->tm_hour : 12;
   int min  = t ? t->tm_min  : 0;
   int mon  = t ? (t->tm_mon + 1) : 11;
-  int mday = t ? t->tm_mday : 3;
-  int wday = t ? t->tm_wday : 2;
+  int mday = t ? t->tm_mday : 23;
 
   char clockBuf[12];
   snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d", hour, min);
-  drawAaString(CX, clockY + 50, clockBuf, 5.2f, 3.0f, 38.0f, C_WHITE, true);
+  smoothDrawText(SF76, clockBuf, CX, clockY + 48, C_WHITE, 1, 1, false);
 
   char dateBuf[24];
-  snprintf(dateBuf, sizeof(dateBuf), "%s %02d  %s", getMonthStr(mon), mday, getWdayStr(wday));
-  drawAaString(CX, clockY + 104, dateBuf, 2.0f, 1.15f, 13.0f, 0xAFBD, true);
+  snprintf(dateBuf, sizeof(dateBuf), "%04d-%02d-%02d", year, mon, mday);
+  smoothDrawText(SF22, dateBuf, CX, clockY + 108, 0xAFBD, 1, 1, false);
 
   // 3. READY / NO LINK 连接状态提示 (移动到时间卡片正下方 Y=222)
-  const int readyY = clockY + clockH + 30; // 220
+  const int readyY = clockY + clockH + 30; // 222
   if (st == WAIT_READY || (bleConnected && bleAuthed)) {
     aaDisc((float)(CX - 38), (float)readyY, 4.5f, 0x760D);
     drawAaString(CX + 6, readyY, "READY", 1.8f, 1.05f, 11.5f, 0x760D, true);
@@ -407,31 +500,11 @@ void drawWaiting(int st) {
     drawAaString(CX + 6, readyY, "LINK LOST", 1.8f, 1.05f, 11.5f, C_RED, true);
   }
 
-  // 阶段一特性：每日通勤路况看板微胶囊 (显示常用地点耗时与路况)
-  int maxCommute = (destItemCount < 2) ? destItemCount : 2;
-  for (int i = 0; i < maxCommute; i++) {
-    if (destItems[i].commuteMin > 0) {
-      char cBuf[48];
-      const char *stTag = (destItems[i].trafficStatus >= 2) ? "拥堵" : (destItems[i].trafficStatus == 1) ? "缓行" : "畅通";
-      uint16_t stCol = (destItems[i].trafficStatus >= 2) ? 0xF9A4 : (destItems[i].trafficStatus == 1) ? 0xFDE0 : 0x05E0;
-      snprintf(cBuf, sizeof(cBuf), "%s %dmin · %s", destItems[i].name[0] ? destItems[i].name : "通勤", destItems[i].commuteMin, stTag);
-      const int capW = 210, capH = 26, capY = readyY + 20;
-      drawTranslucentRoundRect(CX - capW / 2, capY, capW, capH, 13, 0x0000, 180);
-      gfx->drawRoundRect(CX - capW / 2, capY, capW, capH, 13, stCol);
-      aaDisc(CX - capW / 2 + 14, capY + capH / 2, 4.0f, stCol);
-      drawTextUTF8(CX - capW / 2 + 24, capY + 18, cBuf, C_WHITE);
-      break;
-    }
-  }
+  // 收藏点路况仅在用户打开收藏列表抽屉 (drawDestinationsSheet) 时显示，首页保持极简清爽
 
-  // 4. 经典 Rockstar (R星) 风格五角星按钮 (CX=233, Y=322)
+  // 4. 随主题自适应的专属收藏按钮 (CX=233, Y=322)
   const int btnCY = 322;
-  drawTranslucentCircle(CX, btnCY, 34, 0x0000, 180);
-  gfx->drawCircle(CX, btnCY, 34, 0x4A69);
-  gfx->drawCircle(CX, btnCY, 35, 0x2124);
-
-  // R星五角星：纯白实心填充，硬朗金黄轮廓描边
-  drawRockstarStar(CX, btnCY, 19.0f, 8.0f, C_WHITE, 0xFDE0);
+  drawThemedFavIcon(CX, btnCY, 34, false);
 
   // 按钮下方文字标签
   drawAaString(CX, btnCY + 46, "FAVORITES", 1.4f, 0.85f, 9.5f, 0x7BEF, true);
@@ -517,15 +590,17 @@ inline bool routePickerTap(int x, int y) {
 // 收藏与沿途快捷服务抽屉点击处理（待机/巡航/导航通用）
 inline bool destSheetTap(int x, int y) {
   if (!destSheetOpen) return false;
-  const int sheetW = 384;
-  const int sheetH = 356;
+  const int sheetW = 388;
+  const int sheetH = 368;
   const int sheetX = CX - sheetW / 2;
   const int sheetY = CX - sheetH / 2;
+  const int listTop = sheetY + 132;
+  const int listBot = sheetY + sheetH - 46;
 
-  // 点击右上角关闭按钮或外部空白区域：关闭浮层
-  int closeX = sheetX + sheetW - 26;
-  int closeY = sheetY + 26;
-  if ((x - closeX) * (x - closeX) + (y - closeY) * (y - closeY) <= 26 * 26 ||
+  // 点击放大后的右上角关闭按钮（热区半径 34）或外部空白区域：关闭浮层
+  int closeX = sheetX + sheetW - 30;
+  int closeY = sheetY + 30;
+  if ((x - closeX) * (x - closeX) + (y - closeY) * (y - closeY) <= 34 * 34 ||
       x < sheetX || x > sheetX + sheetW || y < sheetY || y > sheetY + sheetH) {
     destSheetOpen = false;
     CompanionMode::startVibration(45, 18);
@@ -533,12 +608,12 @@ inline bool destSheetTap(int x, int y) {
     return true;
   }
 
-  // 1. 检查是否点击顶部 4 个沿途/周边快捷服务图标 (加油站 / 服务区 / 维修点 / 洗手间)
+  // 1. 检查是否点击顶部 4 个沿途/周边快捷服务图标
   static const char *const qCmds[4] = {"T,Q,GAS", "T,Q,SVC", "T,Q,REP", "T,Q,WC"};
   static const char *const qTipZh[4] = {"正在查找顺路加油站...", "正在查找顺路服务区...", "正在查找附近维修点...", "正在查找附近洗手间..."};
-  const int qY = sheetY + 54;
-  const int qW = 83;
-  const int qH = 56;
+  const int qY = sheetY + 58;
+  const int qW = 84;
+  const int qH = 64;
   const int qGap = 8;
   const int qStartX = sheetX + 14;
   for (int k = 0; k < 4; k++) {
@@ -554,6 +629,7 @@ inline bool destSheetTap(int x, int y) {
       strncpy(alongPoi.name, qTipZh[k], sizeof(alongPoi.name) - 1);
       alongPoi.name[sizeof(alongPoi.name) - 1] = 0;
       alongPoi.expireAt = millis() + 6500;
+      alongSearchRequested = true;
       alongSearching = true;
       alongSearchUntil = millis() + 6500;
       if (bleConnected) pendingEvt = qCmds[k];
@@ -562,32 +638,32 @@ inline bool destSheetTap(int x, int y) {
     }
   }
 
-  // 2. 检查是否点击收藏地点项 -> 直接触发圆屏选路规划
-  int showCount = (destItemCount < 3) ? destItemCount : 3;
-  const int itemW = sheetW - 28;
-  const int itemH = 58;
-  const int itemX = sheetX + 14;
-  int startY = sheetY + 120;
-
-  for (int i = 0; i < showCount; i++) {
-    int curY = startY + i * (itemH + 8);
-    if (x >= itemX && x <= itemX + itemW && y >= curY && y <= curY + itemH) {
-      CompanionMode::startVibration(65, 28);
-      destSheetOpen = false;
-      navStarUntil = 0;
-      if (bleConnected) {
-        strncpy(rpDestName, destItems[i].name[0] ? destItems[i].name : "目的地", sizeof(rpDestName) - 1);
-        rpDestName[sizeof(rpDestName) - 1] = 0;
-        rpOptCount = 0;
-        rpSelected = 0;
-        rpErrMsg[0] = 0;
-        routePickerErrUntil = 0;
-        routePickerOpen = true;
-        routePickerLoading = true;
-        pendingEvt = String("T,DEST_GO,") + i;
+  // 2. 检查是否点击可滚动收藏地点项（仅在可视列表区域内生效）
+  if (y >= listTop && y <= listBot) {
+    const int itemW = sheetW - 32;
+    const int itemH = 82;
+    const int itemGap = 10;
+    const int itemX = sheetX + 14;
+    for (int i = 0; i < destItemCount; i++) {
+      int curY = listTop + i * (itemH + itemGap) - destScrollOffset;
+      if (x >= itemX && x <= itemX + itemW && y >= curY && y <= curY + itemH) {
+        CompanionMode::startVibration(65, 28);
+        destSheetOpen = false;
+        navStarUntil = 0;
+        if (bleConnected) {
+          strncpy(rpDestName, destItems[i].name[0] ? destItems[i].name : "目的地", sizeof(rpDestName) - 1);
+          rpDestName[sizeof(rpDestName) - 1] = 0;
+          rpOptCount = 0;
+          rpSelected = 0;
+          rpErrMsg[0] = 0;
+          routePickerErrUntil = 0;
+          routePickerOpen = true;
+          routePickerLoading = true;
+          pendingEvt = String("T,DEST_GO,") + i;
+        }
+        refreshOverlayPage();
+        return true;
       }
-      refreshOverlayPage();
-      return true;
     }
   }
   return true;
@@ -599,11 +675,12 @@ inline bool waitingScreenTap(int x, int y) {
   if (routePickerOpen) return routePickerTap(x, y);
   if (destSheetOpen) return destSheetTap(x, y);
 
-  // 未展开浮层时：检查是否点击了 R星五角星按钮 (CX=233, btnCY=322, 半径 40)
+  // 未展开浮层时：检查是否点击了收藏按钮 (CX=233, btnCY=322, 半径 40)
   int dx = x - CX;
   int dy = y - 322;
   if (dx * dx + dy * dy <= 40 * 40) {
     CompanionMode::startVibration(50, 20);
+    destScrollOffset = 0;
     destSheetOpen = true;
     if (bleConnected) {
       pendingEvt = "T,DEST_Q";

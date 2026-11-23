@@ -50,11 +50,11 @@ static void drawTranslucentDisc(float cx, float cy, float r, uint16_t col, uint8
 
 // 辅助：右对齐抗锯齿字符串（严格不超出 rightX 边界）
 static void drawAaStringRight(float rightX, float cy, const char *str, float scale, float dotR, float spacing, uint16_t color) {
-  if (!str) return;
-  int len = (int)strlen(str);
-  if (len == 0) return;
-  float totalW = (len - 1) * spacing;
-  drawAaString(rightX - totalW, cy, str, scale, dotR, spacing, color, false);
+  (void)dotR;
+  (void)spacing;
+  if (!str || !str[0]) return;
+  const SmoothFont &f = smoothPickFont(scale * 7.2f);
+  smoothDrawText(f, str, (int)lroundf(rightX), (int)lroundf(cy), color, 2, 1, true);
 }
 
 // 辅助：沿圆心角度 deg（0°=12点，负=左倾，正=右倾）绘制带厚度的径向标记线/指针

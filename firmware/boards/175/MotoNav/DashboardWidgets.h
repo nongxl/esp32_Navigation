@@ -1,21 +1,22 @@
 #pragma once
 #include <Arduino.h>
 
-// ================= 车速和限速牌 =================
+// ================= 车速和限速牌（极简扁平放大风格，关闭地图后的无图导航界面）=================
 
 void drawSpeedBlock(bool over) {
   if (speedKmh < 0) return;
-  int sx = hasCam ? 200 : CX;
-  printCentered(String(speedKmh), sx, SPEED_Y, 5, over ? C_RED : C_WHITE);   // 每个字符 30x40
-  printCentered("km/h", sx, SPEED_Y + 46, 2, over ? 0xFC10 : C_GREY);
+  int sx = hasCam ? (CX - 46) : CX;
+  // 去掉顶部电量图标后，顶部空间充裕：使用 SF54 大号扁平抗锯齿时速
+  smoothDrawText(SF54, String(speedKmh).c_str(), sx, 36, over ? C_RED : C_WHITE, 1, 0, false);
+  smoothDrawText(SF16, "km/h", sx, 92, over ? 0xFC10 : 0x94B2, 1, 0, false);
   if (hasCam) {
-    const int bx = 298, by = 76;
+    const int bx = CX + 64, by = 64;
     aaDisc(bx, by, 28, C_SIGNRED);
     aaDisc(bx, by, 21, C_WHITE);
     String lim = String(camLimit);
-    int sz = lim.length() >= 3 ? 2 : 3;
-    printCentered(lim, bx, by - 4 * sz, sz, C_BLACK);
-    printCentered(distText(camDist), bx, by + 34, 2, over ? 0xFC10 : C_GREY);
+    const SmoothFont &lf = (lim.length() >= 3) ? SF16 : SF22;
+    smoothDrawText(lf, lim.c_str(), bx, by, C_BLACK, 1, 1, false);
+    smoothDrawText(SF16, distText(camDist).c_str(), bx, by + 34, over ? 0xFC10 : 0x94B2, 1, 0, false);
   }
 }
 

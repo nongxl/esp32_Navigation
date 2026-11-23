@@ -224,12 +224,9 @@ void arrowHead(float x, float y, float deg, float s, uint16_t c) {
 float min4(float a, float b, float c, float d) { return fminf(fminf(a, b), fminf(c, d)); }
 float max4(float a, float b, float c, float d) { return fmaxf(fmaxf(a, b), fmaxf(c, d)); }
 
-// 居中打印一行字（自带字体每个字符宽 6*size 像素）
+// 居中打印一行字（极简扁平 4-bit 抗锯齿无衬线字体，完全告别像素点阵）
 void printCentered(const String &s, int x, int y, int size, uint16_t color) {
-  gfx->setTextSize(size);
-  gfx->setTextColor(color);
-  gfx->setCursor(x - (int)s.length() * 6 * size / 2, y);
-  gfx->print(s);
+  smoothDrawText(smoothFontForLegacySize(size), s.c_str(), x, y, color, 1, 0, false);
 }
 
 String distText(int m) {

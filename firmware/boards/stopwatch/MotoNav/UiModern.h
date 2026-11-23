@@ -154,54 +154,202 @@ static inline void drawAaChar(float cx, float cy, const uint8_t bmp[5], float sc
   }
 }
 
-// 绘制抗锯齿字符串 (支持居中或左对齐，完全告别锯齿方块点阵)
+// 绘制抗锯齿字符串 (极简扁平现代无衬线字体，支持居中或左对齐，* 和 ^ 自动映射为 °)
 static inline void drawAaString(float cx, float cy, const char *str, float scale, float dotR, float spacing, uint16_t color, bool center = true) {
-  if (!str) return;
-  int len = strlen(str);
-  if (len == 0) return;
-  float totalW = (len - 1) * spacing;
-  float startX = center ? (cx - totalW / 2.0f) : cx;
+  (void)dotR;
+  (void)spacing;
+  if (!str || !str[0]) return;
+  const SmoothFont &f = smoothPickFont(scale * 7.2f);
+  int x = center ? (int)lroundf(cx) : (int)lroundf(cx - 2.0f * scale);
+  int y = (int)lroundf(cy);
+  smoothDrawText(f, str, x, y, color, center ? 1 : 0, 1, true);
+}
 
-  for (int i = 0; i < len; i++) {
-    char ch = str[i];
-    if (ch == ' ') continue;
-    const uint8_t *bmp = getAaGlyph(ch);
-    if (bmp) {
-      drawAaChar(startX + i * spacing, cy, bmp, scale, dotR, color);
+// 3. 精确 SDF 亚像素抗锯齿五角星 (彻底解决锯齿、边缘模糊与填充不均，锐利均匀)
+static inline float sdStar5Polygon(float px, float py, const float vx[10], const float vy[10]) {
+  float minD2 = 1e9f;
+  bool inside = false;
+  for (int i = 0, j = 9; i < 10; j = i++) {
+    float ex = vx[i] - vx[j], ey = vy[i] - vy[j];
+    float wx = px - vx[j], wy = py - vy[j];
+    float el2 = ex * ex + ey * ey;
+    float t = (el2 > 1e-6f) ? constrain((wx * ex + wy * ey) / el2, 0.0f, 1.0f) : 0.0f;
+    float bx = wx - ex * t, by = wy - ey * t;
+    float d2 = bx * bx + by * by;
+    if (d2 < minD2) minD2 = d2;
+    if (((vy[i] > py) != (vy[j] > py)) &&
+        (px < (vx[j] - vx[i]) * (py - vy[i]) / (vy[j] - vy[i] + 1e-7f) + vx[i])) {
+      inside = !inside;
+    }
+  }
+  float d = sqrtf(minD2);
+  return inside ? -d : d;
+}
+
+static inline uint16_t uiBlend565(uint16_t bg, uint16_t fg, float alpha) {
+  if (alpha <= 0.0f) return bg;
+  if (alpha >= 1.0f) return fg;
+  uint32_t t = (uint32_t)(alpha * 256.0f + 0.5f);
+  uint32_t inv = 256u - t;
+  uint32_t r = (((bg >> 11) & 31u) * inv + ((fg >> 11) & 31u) * t) >> 8;
+  uint32_t g = (((bg >> 5)  & 63u) * inv + ((fg >> 5)  & 63u) * t) >> 8;
+  uint32_t b = ((bg         & 31u) * inv + (fg         & 31u) * t) >> 8;
+  return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+// 锐利抗锯齿五角星：cx, cy 为中心, outerR 外径, innerR 内径, strokeW 描边宽
+static inline void drawRockstarStar(int cx, int cy, float outerR, float innerR, uint16_t fillColor, uint16_t outlineColor, float strokeW = 1.6f) {
+  uint16_t *fb = gfx->getFramebuffer();
+  if (!fb) return;
+  float vx[10], vy[10];
+  for (int i = 0; i < 10; i++) {
+    float angle = (-90.0f + i * 36.0f) * (float)M_PI / 180.0f;
+    float r = (i % 2 == 0) ? outerR : innerR;
+    vx[i] = cx + r * cosf(angle);
+    vy[i] = cy + r * sinf(angle);
+  }
+  int pad = (int)ceilf(outerR + strokeW + 2.0f);
+  int x0 = max(0, cx - pad), x1 = min(LCD_WIDTH - 1, cx + pad);
+  int y0 = max(0, cy - pad), y1 = min(LCD_HEIGHT - 1, cy + pad);
+  for (int y = y0; y <= y1; y++) {
+    uint16_t *row = fb + y * LCD_WIDTH;
+    float py = y + 0.5f;
+    for (int x = x0; x <= x1; x++) {
+      float sd = sdStar5Polygon(x + 0.5f, py, vx, vy);
+      if (sd > strokeW + 0.8f) continue;
+      if (fillColor == outlineColor || strokeW <= 0.05f) {
+        float a = constrain(0.5f - sd, 0.0f, 1.0f);
+        if (a > 0.0f) row[x] = uiBlend565(row[x], fillColor, a);
+      } else {
+        // 先叠加外描边，再叠加纯色锐利内部
+        float aOut = constrain(strokeW + 0.5f - sd, 0.0f, 1.0f);
+        if (aOut > 0.0f) row[x] = uiBlend565(row[x], outlineColor, aOut);
+        float aIn = constrain(0.35f - sd, 0.0f, 1.0f);
+        if (aIn > 0.0f) row[x] = uiBlend565(row[x], fillColor, aIn);
+      }
     }
   }
 }
 
-// 3. 经典 Rockstar (R星) 风格五角星绘制函数
-// cx, cy: 中心坐标, outerR: 外顶点半径, innerR: 内凹点半径
-static inline void drawRockstarStar(int cx, int cy, float outerR, float innerR, uint16_t fillColor, uint16_t outlineColor) {
-  float ptsX[10];
-  float ptsY[10];
-  for (int i = 0; i < 10; i++) {
-    float angle = (-90.0f + i * 36.0f) * (float)M_PI / 180.0f;
-    float r = (i % 2 == 0) ? outerR : innerR;
-    ptsX[i] = cx + r * cosf(angle);
-    ptsY[i] = cy + r * sinf(angle);
+// 3b. 随主题自适应的专属收藏图标 (btnR: 圆形底座半径; isHeader: 抽屉标题小图标模式，不画外圆底)
+// - 罪恶都市 (1): 锐利 R★ 金边白星徽章
+// - 龙珠雷达 (11): 晶莹橙金一星珠（高光球体 + 中心鲜红五角星）
+// - 极简主题 (5): 极简扁平电光蓝书签徽章（随日/夜底色自适应）
+// - 原版地图 (0及其他): 经典蓝白导航收藏地标（水滴 Pin + 中心星点）
+static inline void drawThemedFavIcon(int cx, int cy, int btnR, bool isHeader = false) {
+  uint16_t *fb = gfx->getFramebuffer();
+  if (!fb) return;
+  int tid = styleIdx();
+
+  if (tid == ST_DRAGON) {
+    // 龙珠雷达：一星珠
+    if (!isHeader) {
+      drawTranslucentCircle(cx, cy, btnR, 0x0100, 200);
+      gfx->drawCircle(cx, cy, btnR, 0x56E9);
+    }
+    float ballR = isHeader ? (float)btnR * 0.92f : (float)btnR * 0.72f;
+    int rPad = (int)ceilf(ballR + 2.0f);
+    int x0 = max(0, cx - rPad), x1 = min(LCD_WIDTH - 1, cx + rPad);
+    int y0 = max(0, cy - rPad), y1 = min(LCD_HEIGHT - 1, cy + rPad);
+    for (int y = y0; y <= y1; y++) {
+      uint16_t *row = fb + y * LCD_WIDTH;
+      float dy = (y + 0.5f) - cy;
+      for (int x = x0; x <= x1; x++) {
+        float dx = (x + 0.5f) - cx;
+        float dist = sqrtf(dx * dx + dy * dy);
+        if (dist > ballR + 0.8f) continue;
+        float cov = constrain(ballR + 0.5f - dist, 0.0f, 1.0f);
+        float nr = dist / ballR;
+        // 温暖琥珀金 -> 边缘深橙红立体球面渐变
+        uint16_t col = uiBlend565(0xFEE5, 0xE2A0, constrain(nr * nr, 0.0f, 1.0f));
+        // 边缘微描边
+        if (dist > ballR - 1.5f) col = uiBlend565(col, 0x9180, constrain((dist - (ballR - 1.5f)) / 1.5f, 0.0f, 1.0f));
+        // 左上角通透晶莹高光
+        float hx = dx + ballR * 0.34f, hy = dy + ballR * 0.36f;
+        float hDist = sqrtf(hx * hx + hy * hy);
+        if (hDist < ballR * 0.36f) {
+          float ha = (1.0f - hDist / (ballR * 0.36f));
+          col = uiBlend565(col, 0xFFFF, ha * ha * 0.78f);
+        }
+        row[x] = uiBlend565(row[x], col, cov);
+      }
+    }
+    // 中心鲜红一星
+    float sr = ballR * 0.44f;
+    drawRockstarStar(cx, cy + 1, sr, sr * 0.42f, 0xD8A2, 0x9800, isHeader ? 0.5f : 0.8f);
+    return;
   }
 
-  // 扇形三角形拼合填充五角星实心内部
-  for (int i = 0; i < 10; i++) {
-    int next = (i + 1) % 10;
-    gfx->fillTriangle((int)lroundf(ptsX[i]), (int)lroundf(ptsY[i]),
-                      (int)lroundf(ptsX[next]), (int)lroundf(ptsY[next]),
-                      cx, cy, fillColor);
+  if (tid == ST_MINIMAL) {
+    // 极简主题：扁平书签徽章（日/夜自适应）
+    uint16_t bgCol   = nightOn ? 0x10A3 : 0xF7DF;
+    uint16_t rimCol  = nightOn ? 0x4A8C : 0xC67B;
+    uint16_t bmCol   = 0x0B3F; // 电光钴蓝
+    if (!isHeader) {
+      drawTranslucentCircle(cx, cy, btnR, bgCol, nightOn ? 225 : 235);
+      gfx->drawCircle(cx, cy, btnR, rimCol);
+      gfx->drawCircle(cx, cy, btnR - 1, nightOn ? 0x2127 : 0xE77E);
+    }
+    // 扁平抗锯齿书签图标（顶部圆角 + 底部燕尾切口）
+    float bw = isHeader ? (btnR * 1.15f) : (btnR * 0.74f);
+    float bh = isHeader ? (btnR * 1.40f) : (btnR * 0.92f);
+    float hw = bw * 0.5f, hh = bh * 0.5f;
+    float cornerR = max(2.0f, bw * 0.18f);
+    int x0 = max(0, (int)floorf(cx - hw - 2)), x1 = min(LCD_WIDTH - 1, (int)ceilf(cx + hw + 2));
+    int y0 = max(0, (int)floorf(cy - hh - 2)), y1 = min(LCD_HEIGHT - 1, (int)ceilf(cy + hh + 2));
+    for (int y = y0; y <= y1; y++) {
+      uint16_t *row = fb + y * LCD_WIDTH;
+      float py = (y + 0.5f) - cy;
+      for (int x = x0; x <= x1; x++) {
+        float px = fabsf((x + 0.5f) - cx);
+        // 顶部圆角矩形范围
+        float dBox;
+        if (py < -hh + cornerR && px > hw - cornerR) {
+          dBox = hypotf(px - (hw - cornerR), py - (-hh + cornerR)) - cornerR;
+        } else {
+          dBox = fmaxf(px - hw, fmaxf(-hh - py, py - hh));
+        }
+        // 底部居中 V 形燕尾切口：顶点 (0, hh - bh*0.30)，斜边到 (hw, hh)
+        float notchY = (hh - bh * 0.30f) + (px / hw) * (bh * 0.30f);
+        float dNotch = py - notchY; // > 0 在切口内（挖空）
+        float sd = fmaxf(dBox, dNotch);
+        float a = constrain(0.5f - sd, 0.0f, 1.0f);
+        if (a > 0.0f) row[x] = uiBlend565(row[x], bmCol, a);
+      }
+    }
+    return;
   }
 
-  // 轮廓线条平滑描边
-  for (int i = 0; i < 10; i++) {
-    int next = (i + 1) % 10;
-    gfx->drawLine((int)lroundf(ptsX[i]), (int)lroundf(ptsY[i]),
-                  (int)lroundf(ptsX[next]), (int)lroundf(ptsY[next]), outlineColor);
+  if (tid == 1) {
+    // 罪恶都市主题：经典锐利 R★ 徽章（深紫黑底座 + 迈阿密暖金边框 + 均匀纯白锐利五角星）
+    if (!isHeader) {
+      drawTranslucentCircle(cx, cy, btnR, 0x1022, 210);
+      gfx->drawCircle(cx, cy, btnR, 0xFDC0);
+      gfx->drawCircle(cx, cy, btnR - 1, 0x4126);
+    }
+    float sr = isHeader ? (btnR * 0.85f) : (btnR * 0.58f);
+    drawRockstarStar(cx, cy, sr, sr * 0.40f, C_WHITE, 0xFDC0, isHeader ? 1.1f : 1.9f);
+    return;
   }
-  // 5 个外顶点抗锯齿平滑小圆点加固
-  for (int i = 0; i < 10; i += 2) {
-    aaDisc(ptsX[i], ptsY[i], 1.2f, outlineColor);
+
+  // 原版地图（themeIdx == 0 及其他默认）：经典导航蓝水滴收藏地标 + 白色内环
+  if (!isHeader) {
+    drawTranslucentCircle(cx, cy, btnR, 0x0842, 210);
+    gfx->drawCircle(cx, cy, btnR, 0x249F);
+    gfx->drawCircle(cx, cy, btnR - 1, 0x18E5);
   }
+  float headR = isHeader ? (btnR * 0.56f) : (btnR * 0.38f);
+  float headY = cy - headR * 0.32f;
+  float tipY  = cy + headR * 1.48f;
+  // 水滴头部圆 + 下方尖角（抗锯齿）
+  aaDisc((float)cx, headY, headR, 0x249F);
+  int tx0 = (int)lroundf(cx - headR * 0.86f), tx1 = (int)lroundf(cx + headR * 0.86f);
+  int ty0 = (int)lroundf(headY + headR * 0.46f);
+  gfx->fillTriangle(tx0, ty0, tx1, ty0, cx, (int)lroundf(tipY), 0x249F);
+  aaDisc((float)cx, tipY - 0.5f, 1.3f, 0x249F);
+  // 中心纯白圆孔 + 暖金星核
+  aaDisc((float)cx, headY, headR * 0.46f, C_WHITE);
+  aaDisc((float)cx, headY, headR * 0.20f, 0xFE80);
 }
 
 // 4. 动态主题地图背景生成 (根据用户选择的地图主题 themeIdx 和 nightOn，动态呈现对应风格的精美地图底图)
@@ -226,7 +374,28 @@ static inline void drawThemedMapBackground() {
   gfx->fillScreen(c_block);
 
   // 特殊主题附加几何元素
-  if (tid == ST_DRAGON) {
+  if (tid == ST_MINIMAL) {
+    // 极简主题专属底图：微弱色块 + 细腻次路 + 醒目主干道 + 电光蓝导航线
+    uint16_t c_major = nightOn ? C_MINIMAL_MAJOR_NIGHT : C_MINIMAL_MAJOR_DAY;
+    gfx->fillRect(108, 130, 88, 72, c_park);
+    gfx->fillRect(280, 210, 76, 94, c_water);
+    gfx->fillRect(156, 304, 96, 62, c_park);
+    // 细腻次干道
+    for (int x = 58; x < W; x += 64) gfx->fillRect(x, 0, 2, H, c_road);
+    for (int y = 64; y < H; y += 64) gfx->fillRect(0, y, W, 2, c_road);
+    // 醒目主干道（斜交干道与纵向快速路）
+    for (int d = -2; d <= 2; d++) {
+      gfx->drawLine(24, 248 + d, 326, 310 + d, c_major);
+      gfx->drawLine(196 + d, 182, 316 + d, 326, c_major);
+      gfx->drawLine(294 + d, 40, 260 + d, 350, c_major);
+    }
+    // 导航电光蓝主路线
+    gfx->fillRect(CX - 3, 120, 6, 165, c_route);
+    gfx->fillRect(CX - 3, 117, 132, 6, c_route);
+    aaDisc((float)CX, 120.0f, 5.5f, C_WHITE);
+    aaDisc((float)CX, 120.0f, 3.0f, c_route);
+    return;
+  } else if (tid == ST_DRAGON) {
     // 龙珠雷达：绿色同心网格圆与十字基准线
     uint16_t gridCol = 0x04A0;
     gfx->drawCircle(CX, CX, 72, gridCol);

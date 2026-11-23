@@ -1,9 +1,11 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="220dp" android:height="220dp" android:viewportWidth="220" android:viewportHeight="220">
-<path android:fillColor="#000000" android:strokeColor="#555555" android:strokeWidth="2" android:pathData="M110,4 A106,106 0,1 1,110,216 A106,106 0,1 1,110,4"/>
+<path android:fillColor="#12141A" android:strokeColor="#2C3242" android:strokeWidth="2" android:pathData="M110,4 A106,106 0,1 1,110,216 A106,106 0,1 1,110,4"/>
 <group><clip-path android:pathData="M110,4 A106,106 0,1 1,110,216 A106,106 0,1 1,110,4"/>
-<path android:strokeColor="#808080" android:strokeWidth="5" android:fillColor="#00000000" android:pathData="M-10,100 L230,100 M112,-10 L112,230 M19,30 L195,186 M0,148 L79,148 L112,115 L112,0 M79,220 L79,119 L112,100 L168,100"/>
-<path android:strokeColor="#444444" android:strokeWidth="9" android:fillColor="#00000000" android:pathData="M79,164 L79,119 L112,100 L168,100"/>
-<path android:strokeColor="#ffffff" android:strokeWidth="5" android:fillColor="#00000000" android:pathData="M79,164 L79,119 L112,100 L168,100"/>
-<path android:fillColor="#ffffff" android:pathData="M79,148 L71,169 L79,165 L87,169 Z"/>
+<path android:fillColor="#1A1F2B" android:pathData="M34,62 L92,62 L92,118 L34,118 Z M132,96 L186,96 L186,158 L132,158 Z"/>
+<path android:strokeColor="#3C4356" android:strokeWidth="2.5" android:fillColor="#00000000" android:pathData="M-10,92 L230,92 M66,-10 L66,230 M162,-10 L162,230 M-10,152 L230,152"/>
+<path android:strokeColor="#9099B0" android:strokeWidth="4.5" android:fillColor="#00000000" android:pathData="M-8,128 L136,152 M88,78 L152,164 M136,-8 L120,176"/>
+<path android:strokeColor="#05368F" android:strokeWidth="9" android:fillColor="#00000000" android:pathData="M112,172 L114,116 L128,16"/>
+<path android:strokeColor="#0A66FF" android:strokeWidth="5.5" android:fillColor="#00000000" android:pathData="M112,172 L114,116 L128,16"/>
+<path android:fillColor="#FFFFFF" android:pathData="M112,154 L103,178 L112,172 L121,178 Z"/>
 </group>
 </vector>

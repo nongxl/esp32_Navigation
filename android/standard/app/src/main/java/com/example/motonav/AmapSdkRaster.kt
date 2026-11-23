@@ -94,7 +94,7 @@ object AmapSdkRaster {
                     else MapGeo.encodeRaster(f.id,x0,y0,n,n,mmPerPx,mask!!)
                 if(!RasterPacket.valid(bytes,f.id,x0,y0))throw IOException("独立风格地图包不完整")
                 onBaseReady?.invoke(bytes)
-                val pv=300;val p=IntArray(pv*pv){i->val k=(i/pv*n/pv)*n+(i%pv*n/pv);if(mask==null)raw[k]else if(mask[k].toInt()==1)0xff808080.toInt()else 0xff000000.toInt()}
+                val pv=300;val p=IntArray(pv*pv){i->val k=(i/pv*n/pv)*n+(i%pv*n/pv);if(mask==null)raw[k]else when(mask[k].toInt()){1->0xff3c4356.toInt();2->0xff1a1f2b.toInt();3->0xff9099b0.toInt();else->0xff12141a.toInt()}}
                 val preview=if(makePreview)Bitmap.createBitmap(p,pv,pv,Bitmap.Config.ARGB_8888)else null
                 return RasterResult(bytes,1,0,preview,null)
             }

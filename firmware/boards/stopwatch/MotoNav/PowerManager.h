@@ -93,15 +93,31 @@ void drawBattery(int x0, int y0, bool backing = false) {
     gfx->fillRect(x0 + 2, y0 + 2, fw, innerH, c);
   }
 
-  // 4. 内嵌电量文字及充电标识（setTextSize(2) 放大一倍）
+  // 4. 内嵌电量文字及充电标识（极简扁平抗锯齿字体）
   String pctStr = String(constrain(batPct, 0, 100));
   int fillEdge = x0 + 2 + fw;
-  int textW = (int)pctStr.length() * 12 - 2;
-  int ty = y0 + 2 + (innerH - 14) / 2; // 14px 字符高度垂直居中
+  const SmoothFont &bf = SF16;
+  int textW = smoothMeasureWidth(bf, pctStr.c_str(), false);
+  int midY = y0 + BH / 2;
+
+  auto drawBatDigits = [&](int startX) {
+    int penX = startX;
+    for (int i = 0; i < (int)pctStr.length(); i++) {
+      char chStr[2] = {pctStr[i], '\0'};
+      int cw = smoothMeasureWidth(bf, chStr, false);
+      bool inFill = (penX + cw / 2 <= fillEdge);
+      if (!inFill && penX < fillEdge + 6) {
+        smoothDrawTextOutlined(bf, chStr, penX, midY, C_WHITE, C_BLACK, 0, 1, 1);
+      } else {
+        smoothDrawText(bf, chStr, penX, midY, inFill ? C_BLACK : C_WHITE, 0, 1, false);
+      }
+      penX += cw;
+    }
+  };
 
   if (batChg) {
-    // 充电中：小闪电图标 + 放大数字
-    int totalContentW = 8 + 3 + textW;
+    // 充电中：小闪电图标 + 数字
+    int totalContentW = 9 + textW;
     int startX = x0 + 2 + (innerW - totalContentW) / 2;
     int boltX = startX + 3;
     int boltY = y0 + BH / 2;
@@ -110,50 +126,16 @@ void drawBattery(int x0, int y0, bool backing = false) {
     gfx->fillTriangle(boltX - 1, boltY + 6, boltX + 4, boltY, boltX, boltY, C_BLACK);
     gfx->drawLine(boltX - 1, boltY - 3, boltX - 2, boltY + 3, C_WHITE);
 
-    int tx = startX + 11;
-    for (int i = 0; i < (int)pctStr.length(); i++) {
-      int cx = tx + i * 12;
-      bool inFill = (cx + 6 <= fillEdge);
-      if (!inFill && cx < fillEdge + 8) {
-        gfx->setTextSize(2);
-        gfx->setTextColor(C_BLACK);
-        gfx->setCursor(cx + 1, ty); gfx->print(pctStr[i]);
-        gfx->setCursor(cx - 1, ty); gfx->print(pctStr[i]);
-        gfx->setCursor(cx, ty + 1); gfx->print(pctStr[i]);
-        gfx->setCursor(cx, ty - 1); gfx->print(pctStr[i]);
-      }
-      gfx->setTextSize(2);
-      gfx->setTextColor(inFill ? C_BLACK : C_WHITE);
-      gfx->setCursor(cx, ty);
-      gfx->print(pctStr[i]);
-    }
+    drawBatDigits(startX + 10);
   } else {
     // 未充电：电量数字完全居中
     int tx = x0 + 2 + (innerW - textW) / 2;
-    for (int i = 0; i < (int)pctStr.length(); i++) {
-      int cx = tx + i * 12;
-      bool inFill = (cx + 6 <= fillEdge);
-      if (!inFill && cx < fillEdge + 8) {
-        gfx->setTextSize(2);
-        gfx->setTextColor(C_BLACK);
-        gfx->setCursor(cx + 1, ty); gfx->print(pctStr[i]);
-        gfx->setCursor(cx - 1, ty); gfx->print(pctStr[i]);
-        gfx->setCursor(cx, ty + 1); gfx->print(pctStr[i]);
-        gfx->setCursor(cx, ty - 1); gfx->print(pctStr[i]);
-      }
-      gfx->setTextSize(2);
-      gfx->setTextColor(inFill ? C_BLACK : C_WHITE);
-      gfx->setCursor(cx, ty);
-      gfx->print(pctStr[i]);
-    }
+    drawBatDigits(tx);
   }
 }
 
 void drawStatus() {
-  if (onWaitScreen || !inNav) return;             // 待机主页及各页面不画顶部状态栏旧电池
-  gfx->fillRect(CX - 32, 18, 64, 30, C_BLACK);   // 擦除旧电池区域
-  drawBattery(CX - 28, 20);                      // 放大电池图标并居中
-  needFlush = true;
+  // 无地图导航界面已移除顶部电量图标，留出空间放大显示时速
 }
 
 // ===== 待机自适应动态调频（DFS 节能控制）=====

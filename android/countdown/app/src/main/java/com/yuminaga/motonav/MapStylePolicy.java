@@ -9,7 +9,7 @@ public final class MapStylePolicy {
     public static int normalize(int theme) { return isValid(theme) ? theme : VICE_CITY; }
     public static String cacheKey(int theme, boolean buildings) {
         if(theme==ORIGINAL)return "amap-original-v1";
-        if(theme==MINIMAL)return "amap-roads-only-v1";
+        if(theme==MINIMAL)return "amap-minimal-v2";
         return buildings ? "amap-buildings-v1" : "amap-sdk-v3";
     }
     public static boolean usesBasemap(int theme) { return theme != DRAGON_RADAR; }

@@ -121,7 +121,6 @@ void drawNavFrame() {
     uint32_t t = millis();
     if (over) drawEdgeAlertGlow(C_RED, (uint8_t)(85 + 95 * (0.5f + 0.5f * sinf(t * 0.012f))));
     else if (hasCam && camDist > 0 && camDist <= 300) drawEdgeAlertGlow(C_ORANGE, (uint8_t)(65 + 75 * (0.5f + 0.5f * sinf(t * 0.007f))));
-    drawStatus();
     drawSpeedBlock(over);
     printCentered("CRUISE", CX, 300, 4, C_CYAN);
     drawAlongPoiBanner(t);
@@ -152,7 +151,6 @@ void drawNavFrame() {
     drawRingProgress(ringShown, 12, C_YELLOW);
   }
 
-  drawStatus();
   drawSpeedBlock(over);
 
   // 中间图标
@@ -180,6 +178,9 @@ void resetNavState() {
   if (idlePowerOffNavigationActive(true, inNav, cruiseOn, navDir == "A"))
     idlePowerOffReset(&idlePowerOffTimer, millis());
   inNav = false;
+  alongPoi.active = false;
+  alongSearching = false;
+  alongSearchRequested = false;
   tripOn = false; lightDist = -1;                       // v3.1
   mapCamN = 0;                                          // v3.5
   ghostN = 0;                                           // v4.4
