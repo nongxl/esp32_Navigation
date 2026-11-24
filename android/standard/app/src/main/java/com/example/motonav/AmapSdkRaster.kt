@@ -27,8 +27,8 @@ object AmapSdkRaster {
     private val lease=ReentrantLock(true)
     private var host: Host?=null
     private var backgroundProvider: (() -> Host?)?=null
-    private val buildingTiles=object: LinkedHashMap<String,ByteArray>(8,0.75f,true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String,ByteArray>?)=size>8
+    private val buildingTiles=object: LinkedHashMap<String,ByteArray>(24,0.75f,true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String,ByteArray>?)=size>24
     }
     @Volatile var state="等待地图取图器就绪"
         internal set
@@ -139,10 +139,72 @@ object AmapSdkRaster {
                 catch(_: IOException){state="楼块尚未就绪，先显示普通底图"}
                 catch(_: IllegalArgumentException){state="楼块图不完整，先显示普通底图"}
                 catch(_: OutOfMemoryError){state="楼块处理内存不足，先显示普通底图"}
+            } else if(includeBuildings && half > 1200.0) {
+                try {
+                    // 宏观视野（0.2x，7.2km × 7.2km @ 6m/px）：中心 3.6km × 3.6km（3x3 个 1.2km 近景瓦片）完整覆盖圆屏可视区
+                    val roofs=raw.clone()
+                    val baseX = x0 + 1800
+                    val baseY = y0 - 1800
+                    val scale = (mpp / 2.0).roundToInt().coerceAtLeast(1) // 6m/px -> 3
+                    val tileOut = 600 / scale                            // 200px per 1.2km tile
+                    val dstOrigin = (1800.0 / mpp).roundToInt()          // 300px
+                    for(ty in 0..2)for(tx in 0..2) {
+                        cancelled()
+                        val x = baseX + tx * 1200; val y = baseY - ty * 1200
+                        val key = "${f.refLat}_${f.refLng}_${x}_${y}"
+                        val mask = buildingTiles[key] ?: run {
+                            val tile = take(x, y, 600, 2.0, 9000)
+                            ByteArray(tile.size){i->if(AmapBuildings.marked(tile[i]))1 else 0}.also{buildingTiles[key]=it}
+                        }
+                        val ox = dstOrigin + tx * tileOut
+                        val oy = dstOrigin + ty * tileOut
+                        for(j in 0 until tileOut) {
+                            val dy = oy + j
+                            if(dy !in 0 until n) continue
+                            val dstRow = dy * n
+                            val sy0 = j * scale
+                            for(i in 0 until tileOut) {
+                                val dx = ox + i
+                                if(dx !in 0 until n) continue
+                                val sx0 = i * scale
+                                var hits = 0
+                                for(kj in 0 until scale) {
+                                    val mRow = (sy0 + kj) * 600 + sx0
+                                    for(ki in 0 until scale) {
+                                        if(mask[mRow + ki].toInt() != 0) hits++
+                                    }
+                                }
+                                if(hits >= 3) roofs[dstRow + dx] = 0xffff00ff.toInt()
+                            }
+                        }
+                    }
+                    // 消除 3x3 宏观子瓦片接缝处的 1px 建筑断裂
+                    for(seam in intArrayOf(dstOrigin + tileOut, dstOrigin + tileOut * 2)) {
+                        if(seam in 2 until n - 2) {
+                            for(j in dstOrigin until (dstOrigin + tileOut * 3).coerceAtMost(n)) {
+                                val rowOff = j * n
+                                if(roofs[rowOff + seam - 2] == 0xffff00ff.toInt() && roofs[rowOff + seam + 1] == 0xffff00ff.toInt()) {
+                                    roofs[rowOff + seam - 1] = 0xffff00ff.toInt()
+                                    roofs[rowOff + seam] = 0xffff00ff.toInt()
+                                }
+                            }
+                            for(i in dstOrigin until (dstOrigin + tileOut * 3).coerceAtMost(n)) {
+                                if(roofs[(seam - 2) * n + i] == 0xffff00ff.toInt() && roofs[(seam + 1) * n + i] == 0xffff00ff.toInt()) {
+                                    roofs[(seam - 1) * n + i] = 0xffff00ff.toInt()
+                                    roofs[seam * n + i] = 0xffff00ff.toInt()
+                                }
+                            }
+                        }
+                    }
+                    marked=roofs;complete=true
+                }catch(e: CancellationException){throw e}
+                catch(_: IOException){state="宏观楼块尚未就绪，先显示普通底图"}
+                catch(_: IllegalArgumentException){state="宏观楼块图不完整，先显示普通底图"}
+                catch(_: OutOfMemoryError){state="宏观楼块处理内存不足，先显示普通底图"}
             }
             cancelled()
             var buildings: AmapBuildings.Result?=null
-            if(complete)try{buildings=AmapBuildings.apply(marked!!,roads,n,n)}
+            if(complete)try{buildings=AmapBuildings.apply(marked!!,roads,n,n,mmPerPx)}
             catch(_:IllegalArgumentException){complete=false;state="楼块图层异常，先显示普通底图"}
             catch(_:OutOfMemoryError){complete=false;state="楼块处理内存不足，先显示普通底图"}
             val display=buildings?.pixels ?: roads

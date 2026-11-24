@@ -32,26 +32,74 @@ public final class BuildingContinuity {
         boolean complete=valid(incoming) && RasterPacket.isBuilding(incoming);
         Result original=new Result(incoming,complete,0);
         if(!valid(incoming) || !valid(known) || !RasterPacket.isBuilding(known) || u16(incoming,0)!=u16(known,0))return original;
-        // 采样位于像素中心；使用长整数，兼容巡航中心的一米偏移和负坐标。
-        long dx=(long)i32(incoming,2)-i32(known,2);
-        long dy=(long)i32(known,6)-i32(incoming,6);
-        long ox=Math.floorDiv(dx+1,2),oy=Math.floorDiv(dy+1,2);
-        if(ox<=-SIZE || ox>=SIZE || oy<=-SIZE || oy>=SIZE)return original;
+        int inMm=RasterPacket.decodeMm(u16(incoming,14));
+        int knownMm=RasterPacket.decodeMm(u16(known,14));
+        if(inMm<=0 || knownMm<=0)return original;
+        long inX0=i32(incoming,2),inY0=i32(incoming,6);
+        long knX0=i32(known,2),knY0=i32(known,6);
         byte[] current=decode(incoming),previous=decode(known);int retained=0;
-        int xStart=(int)Math.max(0,-ox),xEnd=(int)Math.min(SIZE,SIZE-ox);
-        int yStart=(int)Math.max(0,-oy),yEnd=(int)Math.min(SIZE,SIZE-oy);
-        for(int y=yStart;y<yEnd;y++) {
-            int a=y*SIZE+xStart,b=(int)((y+oy)*SIZE+xStart+ox);
-            for(int x=xStart;x<xEnd;x++,a++,b++) {
-                int ground=current[a]&255,roof=previous[b]&255;
-                // 只补已确认的屋顶；新道路、水面及新取得的屋顶都优先。
-                if((ground==0 || ground==2) && roof>=4 && roof<=7) {
-                    current[a]=(byte)(4|(roof&1)|(ground&2));retained++;
+        if(inMm==knownMm) {
+            long stepM=inMm/1000L;
+            if(stepM<=0)return original;
+            long dx=inX0-knX0,dy=knY0-inY0;
+            long ox=Math.floorDiv(dx+(stepM/2),stepM),oy=Math.floorDiv(dy+(stepM/2),stepM);
+            if(ox<=-SIZE || ox>=SIZE || oy<=-SIZE || oy>=SIZE)return original;
+            int xStart=(int)Math.max(0,-ox),xEnd=(int)Math.min(SIZE,SIZE-ox);
+            int yStart=(int)Math.max(0,-oy),yEnd=(int)Math.min(SIZE,SIZE-oy);
+            for(int y=yStart;y<yEnd;y++) {
+                int a=y*SIZE+xStart,b=(int)((y+oy)*SIZE+xStart+ox);
+                for(int x=xStart;x<xEnd;x++,a++,b++) {
+                    int ground=current[a]&255,roof=previous[b]&255;
+                    // 只补已确认的屋顶；新道路、水面及新取得的屋顶都优先。
+                    if((ground==0 || ground==2) && roof>=4 && roof<=7) {
+                        current[a]=(byte)(4|(roof&1)|(ground&2));retained++;
+                    }
+                }
+            }
+        } else {
+            // 跨分辨率继承（如 2m/px 精细图 -> 6m/px 宏观图，或反向），确保缩放切换瞬间楼块不闪烁消失
+            long dxMm=(inX0-knX0)*1000L,dyMm=(knY0-inY0)*1000L;
+            byte[] carried=new byte[SIZE*SIZE];
+            int scale=Math.max(1,(inMm+knownMm/2)/knownMm);
+            int minHits=scale>=3?2:1;
+            for(int y=0;y<SIZE;y++) {
+                long ky0=Math.floorDiv(dyMm+(long)y*inMm,knownMm);
+                if(ky0+scale<=0 || ky0>=SIZE)continue;
+                int y0=(int)Math.max(0,ky0),y1=(int)Math.min(SIZE,ky0+scale);
+                int rowOff=y*SIZE;
+                for(int x=0;x<SIZE;x++) {
+                    int ground=current[rowOff+x]&255;
+                    if(ground!=0 && ground!=2)continue;
+                    long kx0=Math.floorDiv(dxMm+(long)x*inMm,knownMm);
+                    if(kx0+scale<=0 || kx0>=SIZE)continue;
+                    int x0=(int)Math.max(0,kx0),x1=(int)Math.min(SIZE,kx0+scale);
+                    int hits=0;
+                    for(int ky=y0;ky<y1;ky++) {
+                        int kRow=ky*SIZE;
+                        for(int kx=x0;kx<x1;kx++) {
+                            int r=previous[kRow+kx]&255;
+                            if(r>=4 && r<=7) hits++;
+                        }
+                    }
+                    if(hits>=minHits) { carried[rowOff+x]=1; retained++; }
+                }
+            }
+            if(retained>0) {
+                for(int y=0;y<SIZE;y++) {
+                    int rowOff=y*SIZE;
+                    for(int x=0;x<SIZE;x++) {
+                        int i=rowOff+x;
+                        if(carried[i]==0)continue;
+                        boolean edge=x==0 || x+1==SIZE || y==0 || y+1==SIZE ||
+                            carried[i-1]==0 || carried[i+1]==0 || carried[i-SIZE]==0 || carried[i+SIZE]==0;
+                        int ground=current[i]&255;
+                        current[i]=(byte)((edge?AmapBuildings.OUTLINE:AmapBuildings.ROOF)|(ground&2));
+                    }
                 }
             }
         }
         if(retained==0)return original;
-        byte[] packet=MapGeo.INSTANCE.encodeRaster(u16(incoming,0),i32(incoming,2),i32(incoming,6),SIZE,SIZE,2000|AmapBuildings.FLAG,current,null);
+        byte[] packet=MapGeo.INSTANCE.encodeRaster(u16(incoming,0),i32(incoming,2),i32(incoming,6),SIZE,SIZE,inMm|AmapBuildings.FLAG,current,null);
         if(!valid(packet))return original;
         return new Result(packet,complete,retained);
     }

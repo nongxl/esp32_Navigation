@@ -15,10 +15,16 @@ public final class AmapBuildings {
         Result(byte[] pixels,int buildings,int roofPixels){this.pixels=pixels;this.buildings=buildings;this.roofPixels=roofPixels;}
     }
     public static Result apply(int[] raw,byte[] base,int w,int h) {
+        return apply(raw,base,w,h,2000);
+    }
+    public static Result apply(int[] raw,byte[] base,int w,int h,int mmPerPx) {
         if(w<=0 || h<=0 || (long)w*h!=raw.length || raw.length!=base.length)throw new IllegalArgumentException("楼块图尺寸不一致");
         byte[] mask=new byte[raw.length];int marked=0;
         for(int i=0;i<raw.length;i++)if(marked(raw[i])){mask[i]=1;marked++;}
         if(marked>raw.length/2)throw new IllegalArgumentException("建筑图层覆盖异常，保留当前地图");
+        boolean macro=mmPerPx>2500;
+        int minArea=macro?2:6;
+        int minSpan=macro?1:2;
         int[] component=new int[raw.length];int buildings=0;
         for(int i=0;i<mask.length;i++){
             if(mask[i]!=1)continue;
@@ -32,7 +38,7 @@ public final class AmapBuildings {
                 if(y+1<h && mask[p+w]==1){mask[p+w]=2;component[tail++]=p+w;}
             }
             int bw=maxX-minX+1,bh=maxY-minY+1;
-            boolean valid=tail>=6 && tail<=raw.length/8 && bw>=2 && bh>=2 && (long)tail*8>=(long)bw*bh;
+            boolean valid=tail>=minArea && tail<=raw.length/8 && bw>=minSpan && bh>=minSpan && (long)tail*8>=(long)bw*bh;
             if(valid)buildings++;
             for(int j=0;j<tail;j++)mask[component[j]]=(byte)(valid?3:4);
         }

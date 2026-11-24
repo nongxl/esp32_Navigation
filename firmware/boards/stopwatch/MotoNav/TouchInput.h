@@ -423,23 +423,30 @@ void touchPoll() {
       }
     }
 
-    // 收藏列表抽屉：上下拖动平滑滚动
+    // 收藏列表抽屉：上下拖动平滑滚动（仅在可滚动时接管拖动 + 16ms 节流 + 极速局部刷新）
     if (destSheetOpen && touchDown && !callOn && !pairOn) {
-      float vx = touchX1 - touchX0, vy = touchY1 - touchY0;
-      touchVectorToCanvas(vx, vy);
-      if (!destDragging && fabsf(vy) >= 12.0f) {
-        destDragging = true;
-        destDragStartY = (int)lroundf(vy);
-        destDragStartOff = destScrollOffset;
-      }
-      if (destDragging) {
-        int dy = (int)lroundf(vy) - destDragStartY;
-        int nextOff = constrain(destDragStartOff - dy, 0, destMaxScrollPx());
-        if (nextOff != destScrollOffset) {
-          destScrollOffset = nextOff;
-          refreshOverlayPage();
+      int maxScr = destMaxScrollPx();
+      if (maxScr > 0) {
+        float vx = touchX1 - touchX0, vy = touchY1 - touchY0;
+        touchVectorToCanvas(vx, vy);
+        if (!destDragging && fabsf(vy) >= 8.0f) {
+          destDragging = true;
+          destDragStartY = (int)lroundf(vy);
+          destDragStartOff = destScrollOffset;
         }
-        touchEat = true;
+        if (destDragging) {
+          static unsigned long lastDestDrawAt = 0;
+          int dy = (int)lroundf(vy) - destDragStartY;
+          int nextOff = constrain(destDragStartOff - dy, 0, maxScr);
+          if (nextOff != destScrollOffset) {
+            destScrollOffset = nextOff;
+            if (now - lastDestDrawAt >= 16) {
+              lastDestDrawAt = now;
+              refreshDestSheetScroll();
+            }
+          }
+          touchEat = true;
+        }
       }
     }
 
@@ -492,7 +499,10 @@ void touchPoll() {
     unsigned long pressDuration = now - touchHoldAt;
     touchHoldAt = 0;
     calibTriggered = false;
-    destDragging = false;
+    if (destDragging) {
+      destDragging = false;
+      refreshDestSheetScroll();
+    }
     cruiseExitTriggered = false;
     if (page == 0 && mapZoomActive) {
       mapZoomActive = false;

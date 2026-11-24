@@ -582,7 +582,7 @@ object MapFeeder {
                     val r = if (cached!=null) RasterResult(cached,0,0,null,null) else {
                         capturing = true
                         try {
-                            val allowBld = buildingMode() && rasterHalf <= HALF
+                            val allowBld = buildingMode()
                             AmapSdkRaster.build(f,reqCx,reqCy,rasterHalf,makePreview=true,
                                 shouldCancel={ serial!=requestSerial },includeBuildings=allowBld,style=style,
                                 onBaseReady=if (allowBld) { baseBytesRaw ->

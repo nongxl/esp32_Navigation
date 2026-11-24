@@ -13,7 +13,7 @@ public final class RasterPacket {
     public static final int MM_MASK = 0x0FFF;
 
     public static boolean isBuilding(byte[] b) {
-        return b != null && b.length >= 16 && (u16(b, 14) & (FLAG_PALETTE | FLAG_BUILDINGS | MM_MASK)) == (2000 | FLAG_BUILDINGS);
+        return b != null && b.length >= 16 && (u16(b, 14) & (FLAG_PALETTE | FLAG_BUILDINGS)) == FLAG_BUILDINGS;
     }
 
     public static boolean isDeflated(byte[] b) {
@@ -28,8 +28,9 @@ public final class RasterPacket {
     public static byte[] forLegacy(byte[] b) {
         if (!isBuilding(b) || isDeflated(b) || isDelta(b)) return b;
         byte[] out = b.clone();
-        out[14] = (byte) 2000;
-        out[15] = (byte) (2000 >>> 8);
+        int rawMm = u16(b, 14) & MM_MASK;
+        out[14] = (byte) rawMm;
+        out[15] = (byte) (rawMm >>> 8);
         for (int p = 16; p < out.length; ) {
             int v = out[p] & 255;
             if ((v & 15) > 3) out[p] = (byte) ((v & 240) | (v & 2));
