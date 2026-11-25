@@ -143,6 +143,29 @@
 
 ---
 
+## 赞赏与支持（请作者吃顿肯德基 🍗）
+
+本项目坚持**免费开源、持续打磨**，从固件底层渲染优化到手机端多版本适配均由作者利用业余时间独立维护。
+
+如果 `esp32Nav` 在你的日常通勤或骑行旅途中帮到了你，并且希望支持项目继续保持开源与积极演进，欢迎扫一扫下方二维码请我吃顿肯德基（金额随意，心意无价）！你的每一份鼓励都是持续迭代的最大动力 ❤️
+
+<p align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <img src="assets/donate_wechat.png" width="220" alt="微信赞赏码" /><br/>
+        <b>微信支付 (WeChat Pay)</b>
+      </td>
+      <td align="center">
+        <img src="assets/donate_alipay.jpg" width="220" alt="支付宝赞赏码" /><br/>
+        <b>支付宝 (Alipay)</b>
+      </td>
+    </tr>
+  </table>
+</p>
+
+---
+
 ## 鸣谢与开源许可证合规说明
 
 ### 核心项目与第三方依赖致谢
